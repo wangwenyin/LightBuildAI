@@ -1,4 +1,4 @@
-import { Queue, Worker } from 'bullmq'
+import { Queue } from 'bullmq'
 
 type GenerateJobData = {
   originalUrl: string
@@ -13,22 +13,14 @@ const connection = {
   port: 6379,
 }
 
-export const generateQueue = new Queue<GenerateJobData, GenerateJobResult>('night-image-generate', {
-  connection,
-})
+let generateQueue: Queue<GenerateJobData, GenerateJobResult> | null = null
 
-export const worker = new Worker<GenerateJobData, GenerateJobResult>(
-  'night-image-generate',
-  async (job) => {
-    const { originalUrl } = job.data
-
-    void originalUrl
-
-    return {
-      imageUrl: 'https://your-ai-output.png',
-    }
-  },
-  {
-    connection,
+export function getGenerateQueue() {
+  if (!generateQueue) {
+    generateQueue = new Queue<GenerateJobData, GenerateJobResult>('night-image-generate', {
+      connection,
+    })
   }
-)
+
+  return generateQueue
+}

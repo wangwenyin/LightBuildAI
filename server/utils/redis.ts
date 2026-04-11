@@ -1,8 +1,19 @@
 import { createClient } from 'redis'
 
-const redis = createClient({
-  url: 'redis://localhost:6379'
-})
-redis.connect().catch(console.error)
+let redis: ReturnType<typeof createClient> | null = null
+let connectPromise: ReturnType<ReturnType<typeof createClient>['connect']> | null = null
 
-export default redis
+export async function getRedis() {
+  if (!redis) {
+    redis = createClient({
+      url: 'redis://localhost:6379',
+    })
+  }
+
+  if (!redis.isOpen) {
+    connectPromise ||= redis.connect()
+    await connectPromise
+  }
+
+  return redis
+}

@@ -1,4 +1,6 @@
 import { readBody } from 'h3'
+import fs from 'fs/promises'
+import path from 'path'
 import tencentcloud from 'tencentcloud-sdk-nodejs'
 
 const { hunyuan } = tencentcloud
@@ -6,6 +8,7 @@ const HunyuanClient = hunyuan.v20230901.Client
 
 const POLL_INTERVAL_MS = 2000
 const MAX_POLL_TIMES = 30
+const MAX_CONTENT_IMAGE_BASE64_BYTES = 8 * 1024 * 1024
 
 type GenerateNightImageParams = {
   originalUrl: string
@@ -54,17 +57,15 @@ async function generateNightImage({
   region,
 }: GenerateNightImageParams) {
   const client = createHunyuanClient({ secretId, secretKey, region })
+  const contentImage = await createContentImage(originalUrl)
 
   const submitResult = await client.SubmitHunyuanImageJob({
     Prompt: prompt,
-    Style: '201',
     Resolution: '1024:1024',
     Num: 1,
     Revise: 1,
     LogoAdd: 0,
-    ContentImage: {
-      ImageUrl: originalUrl,
-    },
+    ContentImage: contentImage,
   })
 
   const jobId = submitResult.JobId
@@ -95,6 +96,55 @@ async function generateNightImage({
   }
 
   throw new Error('混元生成超时，请稍后重试')
+}
+
+async function createContentImage(originalUrl: string) {
+  if (isHttpUrl(originalUrl)) {
+    return {
+      ImageUrl: originalUrl,
+    }
+  }
+
+  if (!originalUrl.startsWith('/uploads/')) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: '图片地址格式不合法，请先通过上传接口上传图片',
+    })
+  }
+
+  const uploadPath = decodeURIComponent(originalUrl.split('?')[0])
+  const uploadFilePath = path.resolve(process.cwd(), `public${uploadPath}`)
+  const uploadDir = path.resolve(process.cwd(), 'public/uploads')
+
+  if (!uploadFilePath.startsWith(`${uploadDir}${path.sep}`)) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: '图片地址格式不合法',
+    })
+  }
+
+  const imageBuffer = await fs.readFile(uploadFilePath)
+  const imageBase64 = imageBuffer.toString('base64')
+
+  if (Buffer.byteLength(imageBase64, 'utf8') > MAX_CONTENT_IMAGE_BASE64_BYTES) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: '图片过大，请上传更小的 jpg、jpeg 或 png 图片',
+    })
+  }
+
+  return {
+    ImageBase64: imageBase64,
+  }
+}
+
+function isHttpUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
 }
 
 function createHunyuanClient({

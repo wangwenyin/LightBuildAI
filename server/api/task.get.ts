@@ -1,6 +1,7 @@
-import { getGenerateQueue } from '../utils/mq'
+import { queryNightImageJob } from '../utils/hunyuan'
 
 export default defineEventHandler(async (event) => {
+  const config = useRuntimeConfig(event)
   const { taskId } = getQuery(event)
   const normalizedTaskId = Array.isArray(taskId) ? taskId[0] : taskId
 
@@ -12,27 +13,22 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const generateQueue = getGenerateQueue()
-    const job = await generateQueue.getJob(normalizedTaskId)
-
-    if (!job) {
-      return { status: 'not_found' }
-    }
-
-    if (!job.finishedOn) {
-      return { status: 'processing' }
-    }
+    const result = await queryNightImageJob(normalizedTaskId, {
+      secretId: config.tencentcloudSecretId,
+      secretKey: config.tencentcloudSecretKey,
+      region: config.tencentcloudRegion,
+    })
 
     return {
-      status: 'done',
-      imageUrl: (job.returnvalue as { imageUrl?: string } | undefined)?.imageUrl,
+      taskId: normalizedTaskId,
+      ...result,
     }
   } catch (error) {
-    console.error('读取任务状态失败:', error)
+    console.error('读取任务状态失败', error)
 
     throw createError({
-      statusCode: 503,
-      statusMessage: '任务队列暂不可用，请先启动 Redis 服务',
+      statusCode: 500,
+      statusMessage: error instanceof Error ? error.message : '读取任务状态失败',
     })
   }
 })

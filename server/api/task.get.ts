@@ -26,9 +26,41 @@ export default defineEventHandler(async (event) => {
   } catch (error) {
     console.error('读取任务状态失败', error)
 
+    if (error && typeof error === 'object' && 'statusCode' in error) {
+      throw error
+    }
+
+    const cause = error as {
+      code?: string
+      message?: string
+      requestId?: string
+      response?: {
+        data?: {
+          Response?: {
+            Error?: {
+              Code?: string
+              Message?: string
+            }
+            RequestId?: string
+          }
+        }
+      }
+    }
+    const responseError = cause.response?.data?.Response?.Error
+    const requestId = cause.requestId || cause.response?.data?.Response?.RequestId
+    const message = responseError?.Message || cause.message || '读取任务状态失败'
+    const errorCode = responseError?.Code || cause.code
+
     throw createError({
       statusCode: 500,
-      statusMessage: error instanceof Error ? error.message : '读取任务状态失败',
+      statusMessage: message,
+      data: {
+        source: 'hunyuan',
+        message,
+        errorMessage: message,
+        errorCode,
+        requestId,
+      },
     })
   }
 })

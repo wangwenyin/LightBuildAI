@@ -1,6 +1,6 @@
 <template>
   <div class="p-6 max-w-3xl mx-auto">
-    <h1 class="text-xl font-bold mb-4">AI 白天图转夜景灯光效果图</h1>
+    <h1 class="text-xl font-bold mb-4">REALLINK 图片生成管理平台</h1>
 
     <input type="file" accept="image/*" @change="onFileChange" />
 
@@ -53,7 +53,7 @@
 
 <script setup lang="ts">
 const POLL_INTERVAL_MS = 3000
-const MAX_POLL_ATTEMPTS = 3
+const MAX_POLL_ATTEMPTS = 100
 
 const file = ref<File | null>(null)
 const preview = ref('')
@@ -75,7 +75,23 @@ type TaskResponse = {
   status: 'processing' | 'done' | 'failed'
   imageUrl?: string
   errorMessage?: string
+  errorCode?: string
+  statusMessage?: string
   statusCode?: string
+  requestId?: string
+}
+
+type ApiErrorPayload = {
+  statusMessage?: string
+  message?: string
+  data?: {
+    message?: string
+    errorMessage?: string
+    errorCode?: string
+    statusCode?: string
+    statusMessage?: string
+    requestId?: string
+  }
 }
 
 function onFileChange(event: Event) {
@@ -129,7 +145,7 @@ async function toNight() {
     result.value = await pollTask(response.taskId)
     taskStatus.value = '生成完成'
   } catch (error) {
-    const message = error instanceof Error ? error.message : '生成失败'
+    const message = getErrorMessage(error)
     taskStatus.value = `失败：${message}`
     canRetry.value = true
     alert(`失败：${message}`)
@@ -152,7 +168,7 @@ async function pollTask(taskId: string) {
     }
 
     if (task.status === 'failed') {
-      throw new Error(task.errorMessage || '混元生成任务失败')
+      throw new Error(formatTaskError(task))
     }
 
     taskStatus.value = `正在生成夜景，请稍候...（第 ${attempt + 1} / ${MAX_POLL_ATTEMPTS} 次查询）`
@@ -176,6 +192,41 @@ async function copyTaskId() {
 
 function retryGenerate() {
   void toNight()
+}
+
+function formatTaskError(task: TaskResponse) {
+  const details = [
+    task.errorMessage,
+    task.errorCode ? `错误码：${task.errorCode}` : '',
+    task.statusCode ? `状态码：${task.statusCode}` : '',
+    task.statusMessage ? `状态信息：${task.statusMessage}` : '',
+    task.requestId ? `请求 ID：${task.requestId}` : '',
+  ].filter(Boolean)
+
+  return details.join('；') || '混元生成任务失败'
+}
+
+function getErrorMessage(error: unknown) {
+  if (typeof error === 'string') {
+    return error
+  }
+
+  if (error instanceof Error) {
+    const fetchError = error as Error & ApiErrorPayload
+    const details = [
+      fetchError.data?.errorMessage,
+      fetchError.data?.message,
+      fetchError.data?.errorCode ? `错误码：${fetchError.data.errorCode}` : '',
+      fetchError.data?.statusCode ? `状态码：${fetchError.data.statusCode}` : '',
+      fetchError.data?.statusMessage ? `状态信息：${fetchError.data.statusMessage}` : '',
+      fetchError.data?.requestId ? `请求 ID：${fetchError.data.requestId}` : '',
+      fetchError.message,
+    ].filter(Boolean)
+
+    return details[0] ? Array.from(new Set(details)).join('；') : '生成失败'
+  }
+
+  return '生成失败'
 }
 
 function sleep(ms: number) {

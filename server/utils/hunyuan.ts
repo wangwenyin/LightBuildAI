@@ -61,8 +61,12 @@ export async function queryNightImageJob(
   const client = createHunyuanClient(credentials)
   const queryResult = await client.QueryHunyuanImageJob({ JobId: jobId })
   const statusCode = String(queryResult.JobStatusCode || '')
+  const statusMessage = queryResult.JobStatusMsg || ''
+  const requestId = queryResult.RequestId || ''
+  const errorCode = queryResult.JobErrorCode || ''
+  const errorMessage = queryResult.JobErrorMsg || ''
 
-  if (statusCode === '4') {
+  if (statusCode === '5') {
     const imageUrl = queryResult.ResultImage?.[0]
 
     if (!imageUrl) {
@@ -73,20 +77,27 @@ export async function queryNightImageJob(
       status: 'done' as const,
       imageUrl,
       statusCode,
+      statusMessage,
+      requestId,
     }
   }
 
-  if (statusCode === '3') {
+  if (statusCode === '4') {
     return {
       status: 'failed' as const,
-      errorMessage: queryResult.JobErrorMsg || '混元生成任务失败',
+      errorMessage: errorMessage || '混元生成任务失败',
+      errorCode,
       statusCode,
+      statusMessage,
+      requestId,
     }
   }
 
   return {
     status: 'processing' as const,
     statusCode,
+    statusMessage,
+    requestId,
   }
 }
 
@@ -180,7 +191,7 @@ function createHunyuanClient({
       secretId,
       secretKey,
     },
-    region: region || 'ap-beijing',
+    region: region || 'ap-guangzhou',
     profile: {
       httpProfile: {
         endpoint: 'hunyuan.tencentcloudapi.com',

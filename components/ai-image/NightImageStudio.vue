@@ -14,6 +14,7 @@ const {
   canRetry,
   copyTaskId,
   currentTaskId,
+  customNegativePrompt,
   customPrompt,
   displayedImageUrl,
   downloadResult,
@@ -23,6 +24,8 @@ const {
   isLoading,
   loadingText,
   onFileChange,
+  revisedPrompt,
+  revisePrompt,
   statusVariant,
   taskStatus,
   retryGenerate,
@@ -190,6 +193,26 @@ function appendPrompt(promptSegment: string) {
               rows="6"
             />
 
+            <label class="toggle-row">
+              <input
+                v-model="revisePrompt"
+                class="toggle-checkbox"
+                type="checkbox"
+              >
+              <span>开启混元自动扩写提示词</span>
+            </label>
+
+            <textarea
+              v-model="customNegativePrompt"
+              class="prompt-textarea prompt-textarea--secondary"
+              placeholder="请输入不希望出现的问题，例如：不要白天感、不要乱码广告字、不要室内过亮"
+              rows="4"
+            />
+
+            <p class="panel-tip">
+              负向提示词会与系统默认约束一起提交；如果上传参考图，即使关闭扩写，接口仍可能继续自动扩写。
+            </p>
+
             <div class="chip-list">
               <button
                 v-for="chip in quickPromptChips"
@@ -231,7 +254,14 @@ function appendPrompt(promptSegment: string) {
                 复制任务号
               </button>
             </div>
-            
+          </div>
+
+          <div v-if="revisedPrompt" class="panel-block">
+            <p class="section-eyebrow">调试信息</p>
+            <h2 class="section-title">模型实际扩写 Prompt</h2>
+            <p class="debug-prompt">
+              {{ revisedPrompt }}
+            </p>
           </div>
         </aside>
       </main>
@@ -540,9 +570,41 @@ function appendPrompt(promptSegment: string) {
   outline: none;
 }
 
+.prompt-textarea--secondary {
+  min-height: 112px;
+}
+
 .prompt-textarea:focus {
   border-color: rgba(59, 130, 246, 0.45);
   box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.08);
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.toggle-checkbox {
+  width: 16px;
+  height: 16px;
+}
+
+.debug-prompt {
+  margin: 12px 0 0;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .chip-list {

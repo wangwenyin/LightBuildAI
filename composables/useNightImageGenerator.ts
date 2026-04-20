@@ -2,12 +2,17 @@ type GenerateResponse = {
   taskId: string
   jobId: string
   status: 'processing'
+  debug?: {
+    reviseRequested: boolean
+    hasReferenceImage: boolean
+  }
 }
 
 type TaskResponse = {
   taskId: string
   status: 'processing' | 'done' | 'failed'
   imageUrl?: string
+  revisedPrompt?: string
   errorMessage?: string
   errorCode?: string
   statusMessage?: string
@@ -36,6 +41,9 @@ export function useNightImageGenerator() {
   const sourcePreviewUrl = shallowRef('')
   const resultUrl = shallowRef('')
   const customPrompt = shallowRef('')
+  const customNegativePrompt = shallowRef('')
+  const revisePrompt = shallowRef(true)
+  const revisedPrompt = shallowRef('')
   const taskStatus = shallowRef('')
   const loadingText = shallowRef('生成中...')
   const currentTaskId = shallowRef('')
@@ -97,6 +105,7 @@ export function useNightImageGenerator() {
     resultUrl.value = ''
     taskStatus.value = ''
     currentTaskId.value = ''
+    revisedPrompt.value = ''
     canRetry.value = false
     activeView.value = 'source'
   }
@@ -111,6 +120,7 @@ export function useNightImageGenerator() {
     taskStatus.value = sourceFile.value ? '正在上传原图...' : '正在提交生成任务...'
     loadingText.value = sourceFile.value ? '上传中...' : '提交任务中...'
     currentTaskId.value = ''
+    revisedPrompt.value = ''
     canRetry.value = false
     activeView.value = 'source'
 
@@ -137,14 +147,20 @@ export function useNightImageGenerator() {
         body: {
           ...(originalUrl ? { originalUrl } : {}),
           customPrompt: customPrompt.value,
+          customNegativePrompt: customNegativePrompt.value,
+          revise: revisePrompt.value,
         },
       })
 
       currentTaskId.value = generateResponse.taskId
-      taskStatus.value = `任务已提交，正在生成夜景（任务号：${generateResponse.taskId}）`
+      taskStatus.value = buildSubmitStatus({
+        taskId: generateResponse.taskId,
+        hasReferenceImage: generateResponse.debug?.hasReferenceImage ?? Boolean(originalUrl),
+        reviseRequested: generateResponse.debug?.reviseRequested ?? revisePrompt.value,
+      })
       loadingText.value = '生成中...'
 
-      resultUrl.value = await pollTask(generateResponse.taskId, taskStatus)
+      resultUrl.value = await pollTask(generateResponse.taskId, taskStatus, revisedPrompt)
       activeView.value = 'result'
       taskStatus.value = '生成完成'
     } catch (error) {
@@ -206,6 +222,7 @@ export function useNightImageGenerator() {
     copyTaskId,
     currentTaskId,
     customPrompt,
+    customNegativePrompt,
     displayedImageUrl,
     downloadResult,
     generateNightImage,
@@ -214,6 +231,8 @@ export function useNightImageGenerator() {
     isLoading,
     loadingText,
     onFileChange,
+    revisedPrompt,
+    revisePrompt,
     resultUrl,
     retryGenerate,
     setActiveView,
@@ -223,13 +242,21 @@ export function useNightImageGenerator() {
   }
 }
 
-async function pollTask(taskId: string, taskStatus: { value: string }) {
+async function pollTask(
+  taskId: string,
+  taskStatus: { value: string },
+  revisedPrompt: { value: string },
+) {
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
     await sleep(POLL_INTERVAL_MS)
 
     const task = await $fetch<TaskResponse>('/api/task', {
       query: { taskId },
     })
+
+    if (task.revisedPrompt) {
+      revisedPrompt.value = task.revisedPrompt
+    }
 
     if (task.status === 'done' && task.imageUrl) {
       return task.imageUrl
@@ -289,6 +316,20 @@ function getErrorMessage(error: unknown) {
   }
 
   return '生成失败'
+}
+
+function buildSubmitStatus(params: {
+  taskId: string
+  hasReferenceImage: boolean
+  reviseRequested: boolean
+}) {
+  const notices = [`任务已提交，正在生成夜景（任务号：${params.taskId}）`]
+
+  if (params.hasReferenceImage && !params.reviseRequested) {
+    notices.push('当前使用参考图，混元接口仍可能自动扩写提示词')
+  }
+
+  return notices.join('；')
 }
 
 function sleep(ms: number) {

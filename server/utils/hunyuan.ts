@@ -17,6 +17,8 @@ type HunyuanCredentials = {
 type SubmitNightImageJobParams = HunyuanCredentials & {
   originalUrl?: string
   prompt: string
+  negativePrompt?: string
+  revise?: boolean
 }
 
 type ContentImagePayload =
@@ -26,6 +28,8 @@ type ContentImagePayload =
 export async function submitNightImageJob({
   originalUrl,
   prompt,
+  negativePrompt,
+  revise,
   secretId,
   secretKey,
   region,
@@ -35,9 +39,10 @@ export async function submitNightImageJob({
 
   const submitParams = {
     Prompt: prompt,
+    ...(negativePrompt ? { NegativePrompt: negativePrompt } : {}),
     Resolution: '1024:1024',
     Num: 1,
-    Revise: 1,
+    Revise: revise === false ? 0 : 1,
     LogoAdd: 0,
     ...(contentImage ? { ContentImage: contentImage } : {}),
   }
@@ -76,6 +81,7 @@ export async function queryNightImageJob(
     return {
       status: 'done' as const,
       imageUrl,
+      revisedPrompt: queryResult.RevisedPrompt?.[0],
       statusCode,
       statusMessage,
       requestId,
@@ -95,6 +101,7 @@ export async function queryNightImageJob(
 
   return {
     status: 'processing' as const,
+    revisedPrompt: queryResult.RevisedPrompt?.[0],
     statusCode,
     statusMessage,
     requestId,
@@ -143,6 +150,7 @@ async function createContentImage(originalUrl: string): Promise<ContentImagePayl
 
 function summarizeSubmitParams(params: {
   Prompt: string
+  NegativePrompt?: string
   Resolution: string
   Num: number
   Revise: number
@@ -151,6 +159,7 @@ function summarizeSubmitParams(params: {
 }) {
   return {
     PromptLength: params.Prompt.length,
+    NegativePromptLength: params.NegativePrompt?.length,
     Resolution: params.Resolution,
     Num: params.Num,
     Revise: params.Revise,

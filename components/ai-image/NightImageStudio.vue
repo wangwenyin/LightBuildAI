@@ -186,7 +186,7 @@ function appendPrompt(promptSegment: string) {
             <textarea
               v-model="customPrompt"
               class="prompt-textarea"
-              placeholder="例如：改为现代商业街夜景，灯光更高级，广告牌更清晰，树上增加节日灯饰，整体更通透但保持真实。"
+              placeholder="请输入对图片画面的要求"
               rows="6"
             />
 
@@ -207,7 +207,7 @@ function appendPrompt(promptSegment: string) {
             <button
               class="primary-button"
               type="button"
-              :disabled="isLoading || !hasSourceImage"
+              :disabled="isLoading"
               @click="handleGenerate"
             >
               {{ isLoading ? loadingText : '开始生成夜景' }}
@@ -231,10 +231,7 @@ function appendPrompt(promptSegment: string) {
                 复制任务号
               </button>
             </div>
-
-            <p v-if="currentTaskId" class="task-id">
-              当前任务号：{{ currentTaskId }}
-            </p>
+            
           </div>
         </aside>
       </main>

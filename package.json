@@ -2,9 +2,12 @@
   "name": "light-build-ai",
   "type": "module",
   "private": true,
+  "imports": {
+    "#internal/nuxt/paths": "./internal/nuxt-paths.mjs"
+  },
   "scripts": {
     "build": "nuxt build",
-    "dev": "nuxt dev",
+    "dev": "nuxt dev --open",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare"

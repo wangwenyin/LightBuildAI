@@ -106,34 +106,36 @@ export function useNightImageGenerator() {
   }
 
   async function generateNightImage() {
-    if (!sourceFile.value) {
-      throw new Error('请先上传图片')
-    }
-
     isLoading.value = true
     resultUrl.value = ''
-    taskStatus.value = '正在上传原图...'
-    loadingText.value = '上传中...'
+    taskStatus.value = sourceFile.value ? '正在上传原图...' : '正在提交生成任务...'
+    loadingText.value = sourceFile.value ? '上传中...' : '提交任务中...'
     currentTaskId.value = ''
     canRetry.value = false
     activeView.value = 'source'
 
     try {
-      const form = new FormData()
-      form.append('file', sourceFile.value)
+      let originalUrl: string | undefined
 
-      const uploadResponse = await $fetch<{ url: string }>('/api/upload', {
-        method: 'POST',
-        body: form,
-      })
+      if (sourceFile.value) {
+        const form = new FormData()
+        form.append('file', sourceFile.value)
 
-      taskStatus.value = '已上传，正在提交生成任务...'
+        const uploadResponse = await $fetch<{ url: string }>('/api/upload', {
+          method: 'POST',
+          body: form,
+        })
+
+        originalUrl = uploadResponse.url
+      }
+
+      taskStatus.value = originalUrl ? '已上传，正在提交生成任务...' : '正在提交生成任务...'
       loadingText.value = '提交任务中...'
 
       const generateResponse = await $fetch<GenerateResponse>('/api/generate', {
         method: 'POST',
         body: {
-          originalUrl: uploadResponse.url,
+          ...(originalUrl ? { originalUrl } : {}),
           customPrompt: customPrompt.value,
         },
       })

@@ -9,17 +9,11 @@ export default defineEventHandler(async (event) => {
     customPrompt?: string
   }>(event)
 
-  if (!originalUrl) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: '请先上传原图',
-    })
-  }
-
   const prompt = buildNightPrompt(customPrompt)
+  const normalizedOriginalUrl = originalUrl?.trim() || undefined
 
   const result = await submitNightImageJob({
-    originalUrl,
+    originalUrl: normalizedOriginalUrl,
     prompt,
     secretId: config.tencentcloudSecretId,
     secretKey: config.tencentcloudSecretKey,

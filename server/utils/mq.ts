@@ -1,7 +1,7 @@
 import { Queue } from 'bullmq'
 
 type GenerateJobData = {
-  originalUrl: string
+  originalUrl?: string
 }
 
 type GenerateJobResult = {

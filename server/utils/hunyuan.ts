@@ -15,7 +15,7 @@ type HunyuanCredentials = {
 }
 
 type SubmitNightImageJobParams = HunyuanCredentials & {
-  originalUrl: string
+  originalUrl?: string
   prompt: string
 }
 
@@ -31,7 +31,7 @@ export async function submitNightImageJob({
   region,
 }: SubmitNightImageJobParams) {
   const client = createHunyuanClient({ secretId, secretKey, region })
-  const contentImage = await createContentImage(originalUrl)
+  const contentImage = originalUrl ? await createContentImage(originalUrl) : undefined
 
   const submitParams = {
     Prompt: prompt,
@@ -39,7 +39,7 @@ export async function submitNightImageJob({
     Num: 1,
     Revise: 1,
     LogoAdd: 0,
-    ContentImage: contentImage,
+    ...(contentImage ? { ContentImage: contentImage } : {}),
   }
 
   console.log('SubmitHunyuanImageJob params:', summarizeSubmitParams(submitParams))
@@ -147,7 +147,7 @@ function summarizeSubmitParams(params: {
   Num: number
   Revise: number
   LogoAdd: number
-  ContentImage: ContentImagePayload
+  ContentImage?: ContentImagePayload
 }) {
   return {
     PromptLength: params.Prompt.length,
@@ -156,7 +156,9 @@ function summarizeSubmitParams(params: {
     Revise: params.Revise,
     LogoAdd: params.LogoAdd,
     ContentImage:
-      'ImageUrl' in params.ContentImage
+      !params.ContentImage
+        ? undefined
+        : 'ImageUrl' in params.ContentImage
         ? {
             type: 'ImageUrl',
             value: params.ContentImage.ImageUrl,

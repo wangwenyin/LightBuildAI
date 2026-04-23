@@ -5,8 +5,10 @@ import tencentcloud from 'tencentcloud-sdk-nodejs'
 
 const { hunyuan } = tencentcloud
 const HunyuanClient = hunyuan.v20230901.Client
+const { aiart } = tencentcloud
+const AiartClient = aiart.v20221229.Client
 
-const MAX_CONTENT_IMAGE_BASE64_BYTES = 8 * 1024 * 1024
+const MAX_REFERENCE_IMAGE_BYTES = 6 * 1024 * 1024
 
 type HunyuanCredentials = {
   secretId?: string
@@ -25,7 +27,49 @@ type ContentImagePayload =
   | { ImageUrl: string }
   | { ImageBase64: string }
 
+type AiartImagePayload =
+  | { Url: string }
+  | { Base64: string }
+
 export async function submitNightImageJob({
+  originalUrl,
+  prompt,
+  negativePrompt,
+  revise,
+  secretId,
+  secretKey,
+  region,
+}: SubmitNightImageJobParams) {
+  if (originalUrl) {
+    try {
+      return await generateFromReferenceImage({
+        originalUrl,
+        prompt,
+        secretId,
+        secretKey,
+        region,
+      })
+    } catch (error) {
+      if (!shouldFallbackToHunyuan(error)) {
+        throw error
+      }
+
+      console.warn('AIArt 参考图生成不可用，回退到混元参考图任务：', summarizeError(error))
+    }
+  }
+
+  return submitHunyuanImageJob({
+    originalUrl,
+    prompt,
+    negativePrompt,
+    revise,
+    secretId,
+    secretKey,
+    region,
+  })
+}
+
+async function submitHunyuanImageJob({
   originalUrl,
   prompt,
   negativePrompt,
@@ -56,7 +100,49 @@ export async function submitNightImageJob({
     throw new Error('混元接口未返回任务 ID')
   }
 
-  return { jobId }
+  return {
+    jobId,
+    imageUrl: undefined,
+    requestId: undefined,
+    provider: (contentImage
+      ? 'hunyuan-reference-fallback'
+      : 'hunyuan-text-to-image') as 'hunyuan-reference-fallback' | 'hunyuan-text-to-image',
+  }
+}
+
+async function generateFromReferenceImage({
+  originalUrl,
+  prompt,
+  secretId,
+  secretKey,
+  region,
+}: Required<Pick<SubmitNightImageJobParams, 'originalUrl' | 'prompt'>> &
+  Pick<SubmitNightImageJobParams, 'secretId' | 'secretKey' | 'region'>) {
+  const client = createAiartClient({ secretId, secretKey, region })
+  const referenceImage = await createAiartImagePayload(originalUrl)
+  const submitParams = {
+    Prompt: limitUtf8Text(buildReferenceImagePrompt(prompt), 256),
+    Image: referenceImage,
+    RspImgType: 'url',
+    LogoAdd: 0,
+  }
+
+  console.log('TextToImageRapid reference params:', summarizeReferenceImageParams(submitParams))
+
+  const submitResult = await client.TextToImageRapid(submitParams)
+  const imageUrl = submitResult.ResultImage
+  const requestId = submitResult.RequestId
+
+  if (!imageUrl) {
+    throw new Error('AIArt 参考图生成接口未返回图片地址')
+  }
+
+  return {
+    jobId: requestId ? `aiart:${requestId}` : `aiart:${Date.now()}`,
+    imageUrl,
+    requestId,
+    provider: 'aiart-reference-image' as const,
+  }
 }
 
 export async function queryNightImageJob(
@@ -108,6 +194,20 @@ export async function queryNightImageJob(
   }
 }
 
+async function createAiartImagePayload(originalUrl: string): Promise<AiartImagePayload> {
+  if (isHttpUrl(originalUrl)) {
+    return {
+      Url: originalUrl,
+    }
+  }
+
+  const imageBuffer = await readUploadImageBuffer(originalUrl)
+
+  return {
+    Base64: imageBuffer.toString('base64'),
+  }
+}
+
 async function createContentImage(originalUrl: string): Promise<ContentImagePayload> {
   if (isHttpUrl(originalUrl)) {
     return {
@@ -115,6 +215,14 @@ async function createContentImage(originalUrl: string): Promise<ContentImagePayl
     }
   }
 
+  const imageBuffer = await readUploadImageBuffer(originalUrl)
+
+  return {
+    ImageBase64: imageBuffer.toString('base64'),
+  }
+}
+
+async function readUploadImageBuffer(originalUrl: string) {
   if (!originalUrl.startsWith('/uploads/')) {
     throw createError({
       statusCode: 400,
@@ -134,18 +242,15 @@ async function createContentImage(originalUrl: string): Promise<ContentImagePayl
   }
 
   const imageBuffer = await fs.readFile(uploadFilePath)
-  const imageBase64 = imageBuffer.toString('base64')
 
-  if (imageBase64.length > MAX_CONTENT_IMAGE_BASE64_BYTES) {
+  if (imageBuffer.byteLength > MAX_REFERENCE_IMAGE_BYTES) {
     throw createError({
       statusCode: 400,
       statusMessage: '图片过大，请上传更小的 jpg、jpeg 或 png 图片',
     })
   }
 
-  return {
-    ImageBase64: imageBase64,
-  }
+  return imageBuffer
 }
 
 function summarizeSubmitParams(params: {
@@ -155,7 +260,6 @@ function summarizeSubmitParams(params: {
   Num: number
   Revise: number
   LogoAdd: number
-  ContentImage?: ContentImagePayload
 }) {
   return {
     PromptLength: params.Prompt.length,
@@ -164,19 +268,38 @@ function summarizeSubmitParams(params: {
     Num: params.Num,
     Revise: params.Revise,
     LogoAdd: params.LogoAdd,
-    ContentImage:
-      !params.ContentImage
-        ? undefined
-        : 'ImageUrl' in params.ContentImage
+  }
+}
+
+function summarizeReferenceImageParams(params: {
+  Prompt: string
+  Image: AiartImagePayload
+  RspImgType: string
+  LogoAdd: number
+}) {
+  return {
+    PromptLength: params.Prompt.length,
+    Image:
+      'Url' in params.Image
         ? {
-            type: 'ImageUrl',
-            value: params.ContentImage.ImageUrl,
+            type: 'Url',
+            value: params.Image.Url,
           }
         : {
-            type: 'ImageBase64',
-            base64Length: params.ContentImage.ImageBase64.length,
+            type: 'Base64',
+            base64Length: params.Image.Base64.length,
           },
+    RspImgType: params.RspImgType,
+    LogoAdd: params.LogoAdd,
   }
+}
+
+function summarizeError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  return String(error)
 }
 
 function isHttpUrl(value: string) {
@@ -186,6 +309,54 @@ function isHttpUrl(value: string) {
   } catch {
     return false
   }
+}
+
+function buildReferenceImagePrompt(prompt: string) {
+  return [
+    '以参考图真实改夜景，保持主体、构图、视角、透视、位置不变，只改昼夜和灯光。',
+    prompt,
+  ].join(' ')
+}
+
+function shouldFallbackToHunyuan(error: unknown) {
+  const message = summarizeError(error)
+
+  return [
+    '资源不足',
+    'Resource',
+    'Insufficient',
+    'quota',
+    '额度',
+    '余额',
+    'Server Error',
+  ].some(keyword => message.includes(keyword))
+}
+
+function limitUtf8Text(value: string, maxLength: number) {
+  return value.length <= maxLength ? value : value.slice(0, maxLength)
+}
+
+function createAiartClient({
+  secretId,
+  secretKey,
+  region,
+}: HunyuanCredentials) {
+  if (!secretId || !secretKey) {
+    throw new Error('缺少腾讯云密钥，请在 .env 中配置 TENCENTCLOUD_SECRET_ID 和 TENCENTCLOUD_SECRET_KEY')
+  }
+
+  return new AiartClient({
+    credential: {
+      secretId,
+      secretKey,
+    },
+    region: region || 'ap-guangzhou',
+    profile: {
+      httpProfile: {
+        endpoint: 'aiart.tencentcloudapi.com',
+      },
+    },
+  })
 }
 
 function createHunyuanClient({

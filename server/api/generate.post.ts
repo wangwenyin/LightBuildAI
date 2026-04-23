@@ -18,6 +18,7 @@ export default defineEventHandler(async (event) => {
 
   const prompt = buildNightPrompt(customPrompt)
   const negativePrompt = buildNightNegativePrompt(customNegativePrompt)
+  console.log(prompt, negativePrompt)
   const normalizedOriginalUrl = originalUrl?.trim() || undefined
 
   const result = await submitNightImageJob({
@@ -33,10 +34,13 @@ export default defineEventHandler(async (event) => {
   return {
     taskId: result.jobId,
     jobId: result.jobId,
-    status: 'processing',
+    imageUrl: result.imageUrl,
+    requestId: result.requestId,
+    status: result.imageUrl ? 'done' : 'processing',
     debug: {
       reviseRequested: revise ?? true,
       hasReferenceImage: Boolean(normalizedOriginalUrl),
+      provider: result.provider,
     },
   }
 })

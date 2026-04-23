@@ -24,8 +24,7 @@ export function buildNightPrompt(customPrompt?: string) {
   const normalizedCustomPrompt = customPrompt?.trim()
 
   return [
-    ...defaultNightPromptRules,
-    normalizedCustomPrompt ? `额外要求：${normalizedCustomPrompt}。` : '',
+    normalizedCustomPrompt
   ]
     .filter(Boolean)
     .join(' ')

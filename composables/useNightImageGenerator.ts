@@ -1,10 +1,13 @@
 type GenerateResponse = {
   taskId: string
   jobId: string
-  status: 'processing'
+  status: 'processing' | 'done'
+  imageUrl?: string
+  requestId?: string
   debug?: {
     reviseRequested: boolean
     hasReferenceImage: boolean
+    provider?: 'hunyuan-text-to-image' | 'aiart-reference-image' | 'hunyuan-reference-fallback'
   }
 }
 
@@ -157,10 +160,16 @@ export function useNightImageGenerator() {
         taskId: generateResponse.taskId,
         hasReferenceImage: generateResponse.debug?.hasReferenceImage ?? Boolean(originalUrl),
         reviseRequested: generateResponse.debug?.reviseRequested ?? revisePrompt.value,
+        provider: generateResponse.debug?.provider,
       })
       loadingText.value = '生成中...'
 
-      resultUrl.value = await pollTask(generateResponse.taskId, taskStatus, revisedPrompt)
+      if (generateResponse.imageUrl) {
+        resultUrl.value = generateResponse.imageUrl
+      } else {
+        resultUrl.value = await pollTask(generateResponse.taskId, taskStatus, revisedPrompt)
+      }
+
       activeView.value = 'result'
       taskStatus.value = '生成完成'
     } catch (error) {
@@ -322,10 +331,15 @@ function buildSubmitStatus(params: {
   taskId: string
   hasReferenceImage: boolean
   reviseRequested: boolean
+  provider?: 'hunyuan-text-to-image' | 'aiart-reference-image' | 'hunyuan-reference-fallback'
 }) {
   const notices = [`任务已提交，正在生成夜景（任务号：${params.taskId}）`]
 
-  if (params.hasReferenceImage && !params.reviseRequested) {
+  if (params.provider === 'aiart-reference-image') {
+    notices.push('已使用 AIArt 2.0 参考图生成，优先保持原图结构')
+  } else if (params.provider === 'hunyuan-reference-fallback') {
+    notices.push('AIArt 资源不足，已自动回退到混元参考图生成')
+  } else if (params.hasReferenceImage && !params.reviseRequested) {
     notices.push('当前使用参考图，混元接口仍可能自动扩写提示词')
   }
 

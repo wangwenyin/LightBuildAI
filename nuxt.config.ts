@@ -7,6 +7,7 @@ export default defineNuxtConfig({
     tencentcloudSecretId: process.env.TENCENTCLOUD_SECRET_ID,
     tencentcloudSecretKey: process.env.TENCENTCLOUD_SECRET_KEY,
     tencentcloudRegion: process.env.TENCENTCLOUD_REGION || 'ap-guangzhou',
+    tokenHubApiKey: process.env.TOKENHUB_API_KEY || process.env.TOKENHUB_API_KEY,
     hunyuanMaxPollDurationMs: Number.parseInt(process.env.HUNYUAN_MAX_POLL_DURATION_MS || '', 10) || 300000,
   },
 })

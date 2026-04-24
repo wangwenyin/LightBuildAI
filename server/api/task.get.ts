@@ -17,6 +17,7 @@ export default defineEventHandler(async (event) => {
       secretId: config.tencentcloudSecretId,
       secretKey: config.tencentcloudSecretKey,
       region: config.tencentcloudRegion,
+      tokenHubApiKey: config.tokenHubApiKey,
     })
 
     return {
@@ -55,7 +56,9 @@ export default defineEventHandler(async (event) => {
       statusCode: 500,
       statusMessage: message,
       data: {
-        source: 'hunyuan',
+        source: normalizedTaskId.startsWith('tokenhub:')
+          ? 'tokenhub'
+          : 'hunyuan',
         message,
         errorMessage: message,
         errorCode,

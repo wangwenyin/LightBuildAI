@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { defaultNightPromptRules } from '~/shared/nightPrompt'
-import { useNightImageGenerator } from '~/composables/useNightImageGenerator'
+import { getProviderLabel, useNightImageGenerator } from '~/composables/useNightImageGenerator'
 
 const quickPromptChips = [
   '灯光更高级，适合商业街宣传',
@@ -13,6 +13,10 @@ const {
   activeView,
   canRetry,
   copyTaskId,
+  currentProvider,
+  currentRequestId,
+  currentSeed,
+  currentSize,
   currentTaskId,
   customNegativePrompt,
   customPrompt,
@@ -26,11 +30,15 @@ const {
   onFileChange,
   revisedPrompt,
   revisePrompt,
+  sourceFileHint,
   statusVariant,
   taskStatus,
   retryGenerate,
   setActiveView,
 } = useNightImageGenerator()
+
+const providerLabel = computed(() => getProviderLabel(currentProvider.value))
+const showDebugPanel = computed(() => Boolean(currentTaskId.value || currentProvider.value || currentRequestId.value || revisedPrompt.value))
 
 const promptRuleCount = computed(() => defaultNightPromptRules.length)
 const stageTitle = computed(() => {
@@ -178,6 +186,9 @@ function appendPrompt(promptSegment: string) {
                 @change="onFileChange"
               >
             </div>
+            <p v-if="sourceFileHint" class="panel-tip">
+              {{ sourceFileHint }}
+            </p>
           </div>
 
           <div class="panel-block">
@@ -256,10 +267,33 @@ function appendPrompt(promptSegment: string) {
             </div>
           </div>
 
-          <div v-if="revisedPrompt" class="panel-block">
+          <div v-if="showDebugPanel" class="panel-block">
             <p class="section-eyebrow">调试信息</p>
-            <h2 class="section-title">模型实际扩写 Prompt</h2>
-            <p class="debug-prompt">
+            <h2 class="section-title">当前生成通道</h2>
+            <dl class="debug-meta">
+              <div class="debug-meta-row">
+                <dt>生成通道</dt>
+                <dd>{{ providerLabel }}</dd>
+              </div>
+              <div v-if="currentTaskId" class="debug-meta-row">
+                <dt>任务号</dt>
+                <dd>{{ currentTaskId }}</dd>
+              </div>
+              <div v-if="currentRequestId" class="debug-meta-row">
+                <dt>请求 ID</dt>
+                <dd>{{ currentRequestId }}</dd>
+              </div>
+              <div v-if="currentSize" class="debug-meta-row">
+                <dt>生成尺寸</dt>
+                <dd>{{ currentSize }}</dd>
+              </div>
+              <div v-if="currentSeed !== null" class="debug-meta-row">
+                <dt>随机种子</dt>
+                <dd>{{ currentSeed }}</dd>
+              </div>
+            </dl>
+            <h3 v-if="revisedPrompt" class="debug-subtitle">模型实际扩写 Prompt</h3>
+            <p v-if="revisedPrompt" class="debug-prompt">
               {{ revisedPrompt }}
             </p>
           </div>
@@ -605,6 +639,43 @@ function appendPrompt(promptSegment: string) {
   line-height: 1.8;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.debug-meta {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+}
+
+.debug-meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+}
+
+.debug-meta-row dt {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.debug-meta-row dd {
+  margin: 0;
+  color: #0f172a;
+  font-size: 13px;
+  text-align: right;
+  word-break: break-word;
+}
+
+.debug-subtitle {
+  margin: 16px 0 0;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .chip-list {

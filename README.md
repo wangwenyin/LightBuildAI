@@ -20,6 +20,7 @@ Then fill in the Tencent Cloud credentials in `.env`:
 TENCENTCLOUD_SECRET_ID=your_secret_id
 TENCENTCLOUD_SECRET_KEY=your_secret_key
 TENCENTCLOUD_REGION=ap-beijing
+TOKENHUB_API_KEY=your_TOKENHUB_API_KEY
 HUNYUAN_MAX_POLL_DURATION_MS=300000
 ```
 

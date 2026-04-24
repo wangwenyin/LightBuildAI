@@ -1,3 +1,5 @@
+import defaultPromptText from '~/prompt.txt?raw'
+
 type GenerateResponse = {
   taskId: string
   jobId: string
@@ -7,7 +9,9 @@ type GenerateResponse = {
   debug?: {
     reviseRequested: boolean
     hasReferenceImage: boolean
-    provider?: 'hunyuan-text-to-image' | 'aiart-reference-image' | 'hunyuan-reference-fallback'
+    provider?: 'hunyuan-text-to-image' | 'tokenhub-reference-image' | 'hunyuan-reference-fallback'
+    seed?: number
+    size?: string
   }
 }
 
@@ -38,15 +42,25 @@ type ApiErrorPayload = {
 
 const POLL_INTERVAL_MS = 3000
 const MAX_POLL_ATTEMPTS = 100
+const MAX_TOKENHUB_FILE_BYTES = 1024 * 1024
+const MIN_IMAGE_QUALITY = 0.45
+const DEFAULT_IMAGE_QUALITY = 0.9
+const MAX_IMAGE_DIMENSION = 1600
 
 export function useNightImageGenerator() {
+  const normalizedDefaultPrompt = defaultPromptText.trim()
   const sourceFile = shallowRef<File | null>(null)
   const sourcePreviewUrl = shallowRef('')
   const resultUrl = shallowRef('')
-  const customPrompt = shallowRef('')
+  const currentProvider = shallowRef<'hunyuan-text-to-image' | 'tokenhub-reference-image' | 'hunyuan-reference-fallback' | ''>('')
+  const currentRequestId = shallowRef('')
+  const currentSeed = shallowRef<number | null>(null)
+  const currentSize = shallowRef('')
+  const customPrompt = shallowRef(normalizedDefaultPrompt)
   const customNegativePrompt = shallowRef('')
-  const revisePrompt = shallowRef(true)
+  const revisePrompt = shallowRef(false)
   const revisedPrompt = shallowRef('')
+  const sourceFileHint = shallowRef('')
   const taskStatus = shallowRef('')
   const loadingText = shallowRef('生成中...')
   const currentTaskId = shallowRef('')
@@ -106,9 +120,15 @@ export function useNightImageGenerator() {
     sourceFile.value = selectedFile
     sourcePreviewUrl.value = URL.createObjectURL(selectedFile)
     resultUrl.value = ''
+    sourceFileHint.value = buildFileHint(selectedFile)
     taskStatus.value = ''
     currentTaskId.value = ''
+    currentProvider.value = ''
+    currentRequestId.value = ''
+    currentSeed.value = null
+    currentSize.value = ''
     revisedPrompt.value = ''
+    sourceFileHint.value = ''
     canRetry.value = false
     activeView.value = 'source'
   }
@@ -123,16 +143,26 @@ export function useNightImageGenerator() {
     taskStatus.value = sourceFile.value ? '正在上传原图...' : '正在提交生成任务...'
     loadingText.value = sourceFile.value ? '上传中...' : '提交任务中...'
     currentTaskId.value = ''
+    currentProvider.value = ''
+    currentRequestId.value = ''
+    currentSeed.value = null
+    currentSize.value = ''
     revisedPrompt.value = ''
     canRetry.value = false
     activeView.value = 'source'
 
     try {
       let originalUrl: string | undefined
+      let preparedFileMeta: Awaited<ReturnType<typeof prepareUploadFile>> | null = null
 
       if (sourceFile.value) {
+        taskStatus.value = '正在处理参考图...'
+        loadingText.value = '压缩图片中...'
+        preparedFileMeta = await prepareUploadFile(sourceFile.value)
+        sourceFileHint.value = buildFileHint(preparedFileMeta.file, sourceFile.value)
+
         const form = new FormData()
-        form.append('file', sourceFile.value)
+        form.append('file', preparedFileMeta.file)
 
         const uploadResponse = await $fetch<{ url: string }>('/api/upload', {
           method: 'POST',
@@ -149,6 +179,10 @@ export function useNightImageGenerator() {
         method: 'POST',
         body: {
           ...(originalUrl ? { originalUrl } : {}),
+          ...(preparedFileMeta ? {
+            imageWidth: preparedFileMeta.width,
+            imageHeight: preparedFileMeta.height,
+          } : {}),
           customPrompt: customPrompt.value,
           customNegativePrompt: customNegativePrompt.value,
           revise: revisePrompt.value,
@@ -156,6 +190,10 @@ export function useNightImageGenerator() {
       })
 
       currentTaskId.value = generateResponse.taskId
+      currentProvider.value = generateResponse.debug?.provider ?? ''
+      currentRequestId.value = generateResponse.requestId ?? ''
+      currentSeed.value = generateResponse.debug?.seed ?? null
+      currentSize.value = generateResponse.debug?.size ?? ''
       taskStatus.value = buildSubmitStatus({
         taskId: generateResponse.taskId,
         hasReferenceImage: generateResponse.debug?.hasReferenceImage ?? Boolean(originalUrl),
@@ -229,6 +267,10 @@ export function useNightImageGenerator() {
     activeView,
     canRetry,
     copyTaskId,
+    currentProvider,
+    currentRequestId,
+    currentSeed,
+    currentSize,
     currentTaskId,
     customPrompt,
     customNegativePrompt,
@@ -240,6 +282,7 @@ export function useNightImageGenerator() {
     isLoading,
     loadingText,
     onFileChange,
+    sourceFileHint,
     revisedPrompt,
     revisePrompt,
     resultUrl,
@@ -249,6 +292,150 @@ export function useNightImageGenerator() {
     statusVariant,
     taskStatus,
   }
+}
+
+export function getProviderLabel(provider: 'hunyuan-text-to-image' | 'tokenhub-reference-image' | 'hunyuan-reference-fallback' | '') {
+  if (provider === 'tokenhub-reference-image') {
+    return 'TokenHub 官方通道（URL / Base64）'
+  }
+
+  if (provider === 'hunyuan-reference-fallback') {
+    return '旧混元兜底通道'
+  }
+
+  if (provider === 'hunyuan-text-to-image') {
+    return '混元文生图通道'
+  }
+
+  return '未开始'
+}
+
+async function prepareUploadFile(file: File) {
+  const sourceBitmap = await createImageBitmap(file)
+
+  try {
+    if (file.size <= MAX_TOKENHUB_FILE_BYTES) {
+      return {
+        file,
+        width: sourceBitmap.width,
+        height: sourceBitmap.height,
+      }
+    }
+
+    const { width, height } = getScaledSize(sourceBitmap.width, sourceBitmap.height, MAX_IMAGE_DIMENSION)
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      throw new Error('浏览器不支持图片压缩')
+    }
+
+    context.drawImage(sourceBitmap, 0, 0, width, height)
+
+    const outputType = file.type === 'image/png' ? 'image/jpeg' : file.type || 'image/jpeg'
+    let quality = DEFAULT_IMAGE_QUALITY
+    let outputBlob = await canvasToBlob(canvas, outputType, quality)
+    let outputWidth = width
+    let outputHeight = height
+
+    while (outputBlob.size > MAX_TOKENHUB_FILE_BYTES && quality > MIN_IMAGE_QUALITY) {
+      quality = Math.max(MIN_IMAGE_QUALITY, Number((quality - 0.1).toFixed(2)))
+      outputBlob = await canvasToBlob(canvas, outputType, quality)
+    }
+
+    if (outputBlob.size > MAX_TOKENHUB_FILE_BYTES && (width > 1280 || height > 1280)) {
+      const nextCanvas = document.createElement('canvas')
+      const nextSize = getScaledSize(width, height, 1280)
+      nextCanvas.width = nextSize.width
+      nextCanvas.height = nextSize.height
+      const nextContext = nextCanvas.getContext('2d')
+
+      if (!nextContext) {
+        throw new Error('浏览器不支持图片压缩')
+      }
+
+      nextContext.drawImage(canvas, 0, 0, nextSize.width, nextSize.height)
+      outputBlob = await canvasToBlob(nextCanvas, outputType, MIN_IMAGE_QUALITY)
+      outputWidth = nextSize.width
+      outputHeight = nextSize.height
+    }
+
+    if (outputBlob.size > MAX_TOKENHUB_FILE_BYTES) {
+      throw new Error('图片压缩后仍超过 1MB，请换一张更小的图片')
+    }
+
+    const nextExtension = outputType === 'image/png' ? 'png' : 'jpg'
+    const fileName = replaceFileExtension(file.name, nextExtension)
+
+    return {
+      file: new File([outputBlob], fileName, {
+        type: outputBlob.type,
+        lastModified: Date.now(),
+      }),
+      width: outputWidth,
+      height: outputHeight,
+    }
+  } finally {
+    sourceBitmap.close()
+  }
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('图片压缩失败'))
+        return
+      }
+
+      resolve(blob)
+    }, type, quality)
+  })
+}
+
+function getScaledSize(width: number, height: number, maxDimension: number) {
+  const longestSide = Math.max(width, height)
+
+  if (longestSide <= maxDimension) {
+    return { width, height }
+  }
+
+  const scale = maxDimension / longestSide
+
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  }
+}
+
+function replaceFileExtension(fileName: string, extension: string) {
+  const normalizedName = fileName.replace(/\.[^.]+$/, '')
+  return `${normalizedName}.${extension}`
+}
+
+function buildFileHint(currentFile: File, originalFile?: File) {
+  const currentSizeText = formatFileSize(currentFile.size)
+
+  if (!originalFile || originalFile.size === currentFile.size) {
+    return `当前参考图大小：${currentSizeText}`
+  }
+
+  return `当前参考图已压缩：${formatFileSize(originalFile.size)} → ${currentSizeText}`
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024) {
+    return `${size} B`
+  }
+
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`
+  }
+
+  return `${(size / 1024 / 1024).toFixed(2)} MB`
 }
 
 async function pollTask(
@@ -331,14 +518,14 @@ function buildSubmitStatus(params: {
   taskId: string
   hasReferenceImage: boolean
   reviseRequested: boolean
-  provider?: 'hunyuan-text-to-image' | 'aiart-reference-image' | 'hunyuan-reference-fallback'
+  provider?: 'hunyuan-text-to-image' | 'tokenhub-reference-image' | 'hunyuan-reference-fallback'
 }) {
   const notices = [`任务已提交，正在生成夜景（任务号：${params.taskId}）`]
 
-  if (params.provider === 'aiart-reference-image') {
-    notices.push('已使用 AIArt 2.0 参考图生成，优先保持原图结构')
+  if (params.provider === 'tokenhub-reference-image') {
+    notices.push('已使用 TokenHub 官方参考图生成（支持 URL / Base64）')
   } else if (params.provider === 'hunyuan-reference-fallback') {
-    notices.push('AIArt 资源不足，已自动回退到混元参考图生成')
+    notices.push('TokenHub 不可用，已自动回退到旧混元参考图生成')
   } else if (params.hasReferenceImage && !params.reviseRequested) {
     notices.push('当前使用参考图，混元接口仍可能自动扩写提示词')
   }

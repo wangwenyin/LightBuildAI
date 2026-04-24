@@ -1,4 +1,4 @@
-import defaultPromptText from '~/prompt.txt?raw'
+import defaultPromptText from '../prompt.txt?raw'
 
 type GenerateResponse = {
   taskId: string
@@ -154,10 +154,12 @@ export function useNightImageGenerator() {
     try {
       let originalUrl: string | undefined
       let preparedFileMeta: Awaited<ReturnType<typeof prepareUploadFile>> | null = null
+      let originalImageDimensions: { width: number, height: number } | null = null
 
       if (sourceFile.value) {
         taskStatus.value = '正在处理参考图...'
         loadingText.value = '压缩图片中...'
+        originalImageDimensions = await getImageDimensions(sourceFile.value)
         preparedFileMeta = await prepareUploadFile(sourceFile.value)
         sourceFileHint.value = buildFileHint(preparedFileMeta.file, sourceFile.value)
 
@@ -180,6 +182,8 @@ export function useNightImageGenerator() {
         body: {
           ...(originalUrl ? { originalUrl } : {}),
           ...(preparedFileMeta ? {
+            originalImageWidth: originalImageDimensions?.width,
+            originalImageHeight: originalImageDimensions?.height,
             imageWidth: preparedFileMeta.width,
             imageHeight: preparedFileMeta.height,
           } : {}),
@@ -436,6 +440,28 @@ function formatFileSize(size: number) {
   }
 
   return `${(size / 1024 / 1024).toFixed(2)} MB`
+}
+
+function getImageDimensions(file: File) {
+  return new Promise<{ width: number, height: number }>((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file)
+    const image = new Image()
+
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      resolve({
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+      })
+    }
+
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      reject(new Error('读取图片尺寸失败'))
+    }
+
+    image.src = objectUrl
+  })
 }
 
 async function pollTask(

@@ -6,6 +6,8 @@ export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event)
   const {
     originalUrl,
+    originalImageWidth,
+    originalImageHeight,
     imageWidth,
     imageHeight,
     customPrompt,
@@ -13,6 +15,8 @@ export default defineEventHandler(async (event) => {
     revise,
   } = await readBody<{
     originalUrl?: string
+    originalImageWidth?: number
+    originalImageHeight?: number
     imageWidth?: number
     imageHeight?: number
     customPrompt?: string
@@ -23,6 +27,13 @@ export default defineEventHandler(async (event) => {
   const prompt = buildNightPrompt(customPrompt)
   const negativePrompt = buildNightNegativePrompt(customNegativePrompt)
   const normalizedOriginalUrl = originalUrl?.trim() || undefined
+
+  console.log('Generate request image dimensions:', {
+    originalImageWidth,
+    originalImageHeight,
+    uploadedImageWidth: imageWidth,
+    uploadedImageHeight: imageHeight,
+  })
 
   const result = await submitNightImageJob({
     originalUrl: normalizedOriginalUrl,

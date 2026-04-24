@@ -74,6 +74,8 @@ export async function submitNightImageJob({
     secretId,
     secretKey,
     region,
+    imageWidth,
+    imageHeight,
   })
 }
 
@@ -108,13 +110,13 @@ async function submitTokenHubReferenceImageJob({
   imageHeight?: number
 }) {
   const image = await createTokenHubImageInput(originalUrl, publicOrigin)
-  const size = buildTokenHubSize(imageWidth, imageHeight)
+  const resolution = buildTokenHubResolution(imageWidth, imageHeight)
   const seed = createSeed()
   const payload = {
     model: TOKENHUB_MODEL,
     prompt: buildReferenceImagePrompt(prompt),
     images: [image],
-    size,
+    Resolution: resolution,
     extra_body: {
       seed,
       revise: revise === false ? false : true,
@@ -151,7 +153,7 @@ async function submitTokenHubReferenceImageJob({
     requestId: readTokenHubRequestId(data),
     provider: 'tokenhub-reference-image' as const,
     seed,
-    size,
+    size: resolution,
   }
 }
 
@@ -225,14 +227,17 @@ async function submitHunyuanImageJob({
   secretId,
   secretKey,
   region,
+  imageWidth,
+  imageHeight,
 }: SubmitNightImageJobParams) {
   const client = createHunyuanClient({ secretId, secretKey, region })
   const contentImage = originalUrl ? await createContentImage(originalUrl) : undefined
+  const resolution = buildLegacyResolution(imageWidth, imageHeight)
 
   const submitParams = {
     Prompt: prompt,
     ...(negativePrompt ? { NegativePrompt: negativePrompt } : {}),
-    Resolution: '1024:1024',
+    Resolution: resolution,
     Num: 1,
     Revise: revise === false ? 0 : 1,
     LogoAdd: 0,
@@ -377,7 +382,7 @@ function summarizeTokenHubSubmitParams(params: {
   model: string
   prompt: string
   images: string[]
-  size: string
+  Resolution: string
   extra_body: {
     seed: number
     revise: boolean
@@ -388,7 +393,7 @@ function summarizeTokenHubSubmitParams(params: {
     model: params.model,
     promptLength: params.prompt.length,
     imagePreview: params.images[0]?.slice(0, 80),
-    size: params.size,
+    Resolution: params.Resolution,
     seed: params.extra_body.seed,
     revise: params.extra_body.revise,
     negativePromptLength: params.negative_prompt?.length,
@@ -493,67 +498,56 @@ function detectImageMimeType(filePath: string) {
   return 'image/jpeg'
 }
 
-function buildTokenHubSize(width?: number, height?: number) {
+function buildTokenHubResolution(width?: number, height?: number) {
   if (!width || !height) {
-    return '1024x1024'
+    return '1024:1024'
   }
 
-  const bounded = normalizeImageSize(width, height)
-  return `${bounded.width}x${bounded.height}`
-}
-
-function normalizeImageSize(width: number, height: number) {
-  const minEdge = 512
-  const maxEdge = 2048
-  const maxArea = 1024 * 1024
   const ratio = width / height
 
-  let nextWidth = width
-  let nextHeight = height
-
-  const longest = Math.max(nextWidth, nextHeight)
-
-  if (longest > maxEdge) {
-    const scale = maxEdge / longest
-    nextWidth = Math.round(nextWidth * scale)
-    nextHeight = Math.round(nextHeight * scale)
+  if (ratio >= 3.2) {
+    return '2048:512'
   }
 
-  const shortest = Math.min(nextWidth, nextHeight)
-
-  if (shortest < minEdge) {
-    const scale = minEdge / shortest
-    nextWidth = Math.round(nextWidth * scale)
-    nextHeight = Math.round(nextHeight * scale)
+  if (ratio >= 1.55) {
+    return '1280:720'
   }
 
-  if (nextWidth * nextHeight > maxArea) {
-    const scale = Math.sqrt(maxArea / (nextWidth * nextHeight))
-    nextWidth = Math.round(nextWidth * scale)
-    nextHeight = Math.round(nextHeight * scale)
+  if (ratio >= 1.2) {
+    return '1024:768'
   }
 
-  nextWidth = Math.max(minEdge, Math.min(maxEdge, nextWidth))
-  nextHeight = Math.max(minEdge, Math.min(maxEdge, nextHeight))
-
-  if (nextWidth * nextHeight > maxArea) {
-    if (ratio >= 1) {
-      nextWidth = Math.floor(Math.sqrt(maxArea * ratio))
-      nextHeight = Math.floor(nextWidth / ratio)
-    } else {
-      nextHeight = Math.floor(Math.sqrt(maxArea / ratio))
-      nextWidth = Math.floor(nextHeight * ratio)
-    }
+  if (ratio <= 0.31) {
+    return '512:2048'
   }
 
-  return {
-    width: roundToMultipleOf8(nextWidth),
-    height: roundToMultipleOf8(nextHeight),
+  if (ratio <= 0.68) {
+    return '720:1280'
   }
+
+  if (ratio <= 0.84) {
+    return '768:1024'
+  }
+
+  return '1024:1024'
 }
 
-function roundToMultipleOf8(value: number) {
-  return Math.max(512, Math.round(value / 8) * 8)
+function buildLegacyResolution(width?: number, height?: number) {
+  if (!width || !height) {
+    return '1024:1024'
+  }
+
+  const ratio = width / height
+
+  if (ratio > 1.15) {
+    return '1024:768'
+  }
+
+  if (ratio < 0.87) {
+    return '768:1024'
+  }
+
+  return '1024:1024'
 }
 
 function createSeed() {

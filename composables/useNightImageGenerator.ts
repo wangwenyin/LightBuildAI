@@ -9,7 +9,7 @@ type GenerateResponse = {
   debug?: {
     reviseRequested: boolean
     hasReferenceImage: boolean
-    provider?: 'hunyuan-text-to-image' | 'tokenhub-reference-image' | 'hunyuan-reference-fallback'
+    provider?: 'hunyuan-text-to-image' | 'tokenhub-reference-image'
     seed?: number
     size?: string
   }
@@ -52,7 +52,7 @@ export function useNightImageGenerator() {
   const sourceFile = shallowRef<File | null>(null)
   const sourcePreviewUrl = shallowRef('')
   const resultUrl = shallowRef('')
-  const currentProvider = shallowRef<'hunyuan-text-to-image' | 'tokenhub-reference-image' | 'hunyuan-reference-fallback' | ''>('')
+  const currentProvider = shallowRef<'hunyuan-text-to-image' | 'tokenhub-reference-image' | ''>('')
   const currentRequestId = shallowRef('')
   const currentSeed = shallowRef<number | null>(null)
   const currentSize = shallowRef('')
@@ -298,13 +298,9 @@ export function useNightImageGenerator() {
   }
 }
 
-export function getProviderLabel(provider: 'hunyuan-text-to-image' | 'tokenhub-reference-image' | 'hunyuan-reference-fallback' | '') {
+export function getProviderLabel(provider: 'hunyuan-text-to-image' | 'tokenhub-reference-image' | '') {
   if (provider === 'tokenhub-reference-image') {
     return 'TokenHub 官方通道（URL / Base64）'
-  }
-
-  if (provider === 'hunyuan-reference-fallback') {
-    return '旧混元兜底通道'
   }
 
   if (provider === 'hunyuan-text-to-image') {
@@ -544,14 +540,12 @@ function buildSubmitStatus(params: {
   taskId: string
   hasReferenceImage: boolean
   reviseRequested: boolean
-  provider?: 'hunyuan-text-to-image' | 'tokenhub-reference-image' | 'hunyuan-reference-fallback'
+  provider?: 'hunyuan-text-to-image' | 'tokenhub-reference-image'
 }) {
   const notices = [`任务已提交，正在生成夜景（任务号：${params.taskId}）`]
 
   if (params.provider === 'tokenhub-reference-image') {
     notices.push('已使用 TokenHub 官方参考图生成（支持 URL / Base64）')
-  } else if (params.provider === 'hunyuan-reference-fallback') {
-    notices.push('TokenHub 不可用，已自动回退到旧混元参考图生成')
   } else if (params.hasReferenceImage && !params.reviseRequested) {
     notices.push('当前使用参考图，混元接口仍可能自动扩写提示词')
   }

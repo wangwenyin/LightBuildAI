@@ -18,6 +18,7 @@ const {
   currentSeed,
   currentSize,
   currentTaskId,
+  enableNegativePrompt,
   customNegativePrompt,
   customPrompt,
   displayedImageUrl,
@@ -213,14 +214,24 @@ function appendPrompt(promptSegment: string) {
               <span>开启混元自动扩写提示词</span>
             </label>
 
+            <label class="toggle-row">
+              <input
+                v-model="enableNegativePrompt"
+                class="toggle-checkbox"
+                type="checkbox"
+              >
+              <span>开启负向提示词</span>
+            </label>
+
             <textarea
+              v-if="enableNegativePrompt"
               v-model="customNegativePrompt"
               class="prompt-textarea prompt-textarea--secondary"
               placeholder="请输入不希望出现的问题，例如：不要白天感、不要乱码广告字、不要室内过亮"
               rows="4"
             />
 
-            <p class="panel-tip">
+            <p v-if="enableNegativePrompt" class="panel-tip">
               负向提示词会与系统默认约束一起提交；如果上传参考图，即使关闭扩写，接口仍可能继续自动扩写。
             </p>
 

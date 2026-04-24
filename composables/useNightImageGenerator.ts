@@ -1,5 +1,3 @@
-import defaultPromptText from '../prompt.txt?raw'
-
 type GenerateResponse = {
   taskId: string
   jobId: string
@@ -48,7 +46,6 @@ const DEFAULT_IMAGE_QUALITY = 0.9
 const MAX_IMAGE_DIMENSION = 1600
 
 export function useNightImageGenerator() {
-  const normalizedDefaultPrompt = defaultPromptText.trim()
   const sourceFile = shallowRef<File | null>(null)
   const sourcePreviewUrl = shallowRef('')
   const resultUrl = shallowRef('')
@@ -56,8 +53,9 @@ export function useNightImageGenerator() {
   const currentRequestId = shallowRef('')
   const currentSeed = shallowRef<number | null>(null)
   const currentSize = shallowRef('')
-  const customPrompt = shallowRef(normalizedDefaultPrompt)
+  const customPrompt = shallowRef('')
   const customNegativePrompt = shallowRef('')
+  const enableNegativePrompt = shallowRef(false)
   const revisePrompt = shallowRef(false)
   const revisedPrompt = shallowRef('')
   const sourceFileHint = shallowRef('')
@@ -188,7 +186,7 @@ export function useNightImageGenerator() {
             imageHeight: preparedFileMeta.height,
           } : {}),
           customPrompt: customPrompt.value,
-          customNegativePrompt: customNegativePrompt.value,
+          customNegativePrompt: enableNegativePrompt.value ? customNegativePrompt.value : '',
           revise: revisePrompt.value,
         },
       })
@@ -276,6 +274,7 @@ export function useNightImageGenerator() {
     currentSeed,
     currentSize,
     currentTaskId,
+    enableNegativePrompt,
     customPrompt,
     customNegativePrompt,
     displayedImageUrl,

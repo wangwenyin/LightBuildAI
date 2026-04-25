@@ -1,8 +1,12 @@
 <script setup lang="ts">
+import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
+import { useLocalImageHistory } from '~/composables/useLocalImageHistory'
+
 const {
   activeView,
   canRetry,
   customPrompt,
+  currentTaskId,
   displayedImageUrl,
   downloadResult,
   generateNightImage,
@@ -11,11 +15,29 @@ const {
   isLoading,
   loadingText,
   onFileChange,
+  resetGenerator,
+  restoreHistorySnapshot,
+  resultUrl,
+  retryGenerate,
   setActiveView,
+  sourcePreviewUrl,
   statusVariant,
   taskStatus,
-  retryGenerate,
 } = useNightImageGenerator()
+
+const {
+  clearRecords,
+  deleteRecord,
+  getLatestRecord,
+  getRecord,
+  loadRecords,
+  records,
+  saveRecord,
+} = useLocalImageHistory()
+
+const isSidebarExpanded = shallowRef(true)
+const activeHistoryId = shallowRef('')
+const draftHistoryId = shallowRef('')
 
 const stageTitle = computed(() => {
   if (hasResultImage.value && activeView.value === 'result') {
@@ -37,9 +59,139 @@ const primaryActionLabel = computed(() => {
   return hasResultImage.value ? '再次生成' : '开始生成夜景'
 })
 
+const recentRecords = computed(() => records.value.map(record => ({
+  id: record.id,
+  title: record.title,
+  subtitle: record.prompt || '未填写提示词',
+  meta: formatRelativeTime(record.updatedAt),
+})))
+
+onMounted(() => {
+  loadRecords()
+
+  const latestRecord = getLatestRecord()
+
+  if (latestRecord) {
+    openHistory(latestRecord.id)
+  } else {
+    draftHistoryId.value = createHistoryId()
+  }
+})
+
+watch(
+  () => [
+    sourcePreviewUrl.value,
+    resultUrl.value,
+    customPrompt.value,
+    taskStatus.value,
+    currentTaskId.value,
+  ],
+  () => {
+    if (!sourcePreviewUrl.value && !resultUrl.value) {
+      return
+    }
+
+    if (!draftHistoryId.value) {
+      draftHistoryId.value = createHistoryId()
+    }
+
+    saveRecord({
+      id: draftHistoryId.value,
+      taskId: currentTaskId.value || undefined,
+      prompt: customPrompt.value,
+      sourceImageUrl: sourcePreviewUrl.value,
+      resultImageUrl: resultUrl.value,
+      status: taskStatus.value,
+    })
+  },
+)
+
+function toggleSidebar() {
+  isSidebarExpanded.value = !isSidebarExpanded.value
+}
+
+function createHistoryId() {
+  return `image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function formatRelativeTime(value: string) {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function openHistory(recordId: string) {
+  const record = getRecord(recordId)
+
+  if (!record) {
+    return
+  }
+
+  activeHistoryId.value = record.id
+  draftHistoryId.value = record.id
+  restoreHistorySnapshot({
+    sourceImageUrl: record.sourceImageUrl,
+    resultImageUrl: record.resultImageUrl,
+    prompt: record.prompt,
+    status: record.status,
+    taskId: record.taskId,
+  })
+}
+
+function handleNewTask() {
+  activeHistoryId.value = ''
+  draftHistoryId.value = createHistoryId()
+  resetGenerator()
+}
+
+function handleDeleteRecord(recordId: string) {
+  deleteRecord(recordId)
+
+  if (activeHistoryId.value !== recordId && draftHistoryId.value !== recordId) {
+    return
+  }
+
+  const latestRecord = getLatestRecord()
+
+  if (latestRecord) {
+    openHistory(latestRecord.id)
+    return
+  }
+
+  handleNewTask()
+}
+
+function handleClearRecords() {
+  clearRecords()
+  handleNewTask()
+}
+
+function handleFileSelect(event: Event) {
+  if (!draftHistoryId.value || activeHistoryId.value) {
+    draftHistoryId.value = createHistoryId()
+    activeHistoryId.value = ''
+  }
+
+  onFileChange(event)
+}
+
 async function handleGenerate() {
   try {
+    if (!draftHistoryId.value) {
+      draftHistoryId.value = createHistoryId()
+    }
+
     await generateNightImage()
+    activeHistoryId.value = draftHistoryId.value
   } catch (error) {
     const message = error instanceof Error ? error.message : '生成失败'
     window.alert(`失败：${message}`)
@@ -57,136 +209,310 @@ async function handleRetry() {
 </script>
 
 <template>
-  <section class="image-studio">
-    <div class="studio-stage-card">
-      <div class="stage-header">
-        <div class="stage-title-group">
-          <p class="section-label">
-            Visual Stage
+  <section class="image-layout" :class="{ 'image-layout--collapsed': !isSidebarExpanded }">
+    <aside class="image-sidebar">
+      <div class="sidebar-top">
+        <div v-if="isSidebarExpanded" class="sidebar-brand">
+          <div class="brand-mark">
+            LB
+          </div>
+          <div>
+            <p class="brand-name">
+              LightBuild AI
+            </p>
+            <p class="brand-subtitle">
+              Image Workspace
+            </p>
+          </div>
+        </div>
+
+        <button
+          class="sidebar-toggle"
+          :class="{ 'sidebar-toggle--collapsed': !isSidebarExpanded }"
+          type="button"
+          :aria-label="isSidebarExpanded ? '收起侧边栏' : '展开侧边栏'"
+          @click="toggleSidebar"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M4.75 5.75A1.5 1.5 0 0 1 6.25 4.25h11.5a1.5 1.5 0 0 1 1.5 1.5v12.5a1.5 1.5 0 0 1-1.5 1.5H6.25a1.5 1.5 0 0 1-1.5-1.5zm2 .5v11.5h10.5V6.25zm2.5 0v11.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.6"
+            />
+          </svg>
+        </button>
+      </div>
+
+      <button class="new-task-button" type="button" @click="handleNewTask">
+        <span v-if="isSidebarExpanded">新建任务</span>
+        <span v-else>+</span>
+      </button>
+
+      <RecentRecordsPanel
+        v-if="isSidebarExpanded"
+        title="最近"
+        :items="recentRecords"
+        :active-id="activeHistoryId"
+        empty-text="暂无生成记录"
+        show-clear
+        show-delete
+        @select="openHistory"
+        @delete="handleDeleteRecord"
+        @clear="handleClearRecords"
+      />
+    </aside>
+
+    <main class="image-main">
+      <div class="studio-stage-card">
+        <div class="stage-header">
+          <div class="stage-title-group">
+            <p class="section-label">
+              Visual Stage
+            </p>
+            <h2 class="stage-title">
+              {{ stageTitle }}
+            </h2>
+          </div>
+
+          <div class="stage-tools">
+            <div v-if="hasSourceImage" class="view-switch" role="tablist" aria-label="切换预览">
+              <button
+                class="view-switch-button"
+                :class="{ 'view-switch-button--active': activeView === 'source' }"
+                type="button"
+                @click="setActiveView('source')"
+              >
+                原图
+              </button>
+              <button
+                class="view-switch-button"
+                :class="{ 'view-switch-button--active': activeView === 'result' }"
+                type="button"
+                :disabled="!hasResultImage"
+                @click="setActiveView('result')"
+              >
+                夜景
+              </button>
+            </div>
+
+            <button
+              v-if="hasResultImage && activeView === 'result'"
+              class="ghost-button ghost-button--dark"
+              type="button"
+              @click="downloadResult"
+            >
+              下载成片
+            </button>
+          </div>
+        </div>
+
+        <div class="image-stage">
+          <div v-if="displayedImageUrl" class="image-wrapper">
+            <img :src="displayedImageUrl" :alt="stageTitle" class="stage-image">
+          </div>
+
+          <label v-else class="empty-state" for="source-file-input">
+            <span class="empty-badge">NIGHT</span>
+            <strong class="empty-title">拖入或上传一张白天参考图</strong>
+            <span class="empty-description">
+              建议选择主体清晰、透视明确的商业街景或建筑立面，以获得更稳定、更真实的夜景表达。
+            </span>
+          </label>
+        </div>
+
+        <div class="stage-footer">
+          <p class="stage-note">
+            支持 JPG、PNG；建议使用清晰原图，避免严重逆光或主体过小。
           </p>
-          <h2 class="stage-title">
-            {{ stageTitle }}
+
+          <div v-if="taskStatus" class="status-pill" :class="`status-pill--${statusVariant}`">
+            {{ taskStatus }}
+          </div>
+        </div>
+      </div>
+
+      <section class="prompt-card">
+        <div class="prompt-header">
+          <p class="section-label">
+            Prompt Composer
+          </p>
+          <h2 class="prompt-title">
+            上传图片，然后描述你想要的夜景气质。
           </h2>
         </div>
 
-        <div class="stage-tools">
-          <div v-if="hasSourceImage" class="view-switch" role="tablist" aria-label="切换预览">
-            <button
-              class="view-switch-button"
-              :class="{ 'view-switch-button--active': activeView === 'source' }"
-              type="button"
-              @click="setActiveView('source')"
-            >
-              原图
-            </button>
-            <button
-              class="view-switch-button"
-              :class="{ 'view-switch-button--active': activeView === 'result' }"
-              type="button"
-              :disabled="!hasResultImage"
-              @click="setActiveView('result')"
-            >
-              夜景
-            </button>
-          </div>
+        <textarea
+          v-model="customPrompt"
+          class="prompt-textarea"
+          placeholder="例如：整体更像高端商业街夜景，门头灯光克制而有层次，橱窗暖光通透，路面反射细腻，避免廉价霓虹感。"
+          rows="5"
+        />
 
+        <div class="prompt-actions">
+          <label class="ghost-button" for="source-file-input">
+            {{ hasSourceImage ? '更换图片' : '上传参考图' }}
+          </label>
           <button
-            v-if="hasResultImage && activeView === 'result'"
-            class="ghost-button ghost-button--dark"
+            class="primary-button"
             type="button"
-            @click="downloadResult"
+            :disabled="isLoading"
+            @click="handleGenerate"
           >
-            下载成片
+            {{ primaryActionLabel }}
+          </button>
+          <button
+            class="ghost-button"
+            type="button"
+            :disabled="!canRetry || isLoading"
+            @click="handleRetry"
+          >
+            重新生成
           </button>
         </div>
-      </div>
 
-      <div class="image-stage">
-        <div v-if="displayedImageUrl" class="image-wrapper">
-          <img :src="displayedImageUrl" :alt="stageTitle" class="stage-image">
-        </div>
-
-        <label v-else class="empty-state" for="source-file-input">
-          <span class="empty-badge">NIGHT</span>
-          <strong class="empty-title">拖入或上传一张白天参考图</strong>
-          <span class="empty-description">
-            建议选择主体清晰、透视明确的商业街景或建筑立面，以获得更稳定、更真实的夜景表达。
-          </span>
-        </label>
-      </div>
-
-      <div class="stage-footer">
-        <p class="stage-note">
-          支持 JPG、PNG；建议使用清晰原图，避免严重逆光或主体过小。
-        </p>
-
-        <div v-if="taskStatus" class="status-pill" :class="`status-pill--${statusVariant}`">
-          {{ taskStatus }}
-        </div>
-      </div>
-    </div>
-
-    <section class="prompt-card">
-      <div class="prompt-header">
-        <p class="section-label">
-          Prompt Composer
-        </p>
-        <h2 class="prompt-title">
-          上传图片，然后描述你想要的夜景气质。
-        </h2>
-      </div>
-
-      <textarea
-        v-model="customPrompt"
-        class="prompt-textarea"
-        placeholder="例如：整体更像高端商业街夜景，门头灯光克制而有层次，橱窗暖光通透，路面反射细腻，避免廉价霓虹感。"
-        rows="5"
-      />
-
-      <div class="prompt-actions">
-        <label class="ghost-button" for="source-file-input">
-          {{ hasSourceImage ? '更换图片' : '上传参考图' }}
-        </label>
-        <button
-          class="primary-button"
-          type="button"
-          :disabled="isLoading"
-          @click="handleGenerate"
+        <input
+          id="source-file-input"
+          class="visually-hidden"
+          type="file"
+          accept="image/*"
+          @change="handleFileSelect"
         >
-          {{ primaryActionLabel }}
-        </button>
-        <button
-          class="ghost-button"
-          type="button"
-          :disabled="!canRetry || isLoading"
-          @click="handleRetry"
-        >
-          重新生成
-        </button>
-      </div>
-
-      <input
-        id="source-file-input"
-        class="visually-hidden"
-        type="file"
-        accept="image/*"
-        @change="onFileChange"
-      >
-    </section>
+      </section>
+    </main>
   </section>
 </template>
 
 <style scoped>
-.image-studio {
+.image-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  min-height: calc(100vh - 210px);
+  overflow: hidden;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 32px;
+  background: rgba(250, 250, 249, 0.72);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(18px);
+}
+
+.image-layout--collapsed {
+  grid-template-columns: 88px minmax(0, 1fr);
+}
+
+.image-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px;
+  border-right: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(244, 244, 245, 0.92);
+}
+
+.sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: #111827;
+  color: #f9fafb;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.brand-name {
+  margin: 0;
+  color: #111827;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.brand-subtitle {
+  margin: 0;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.sidebar-toggle,
+.new-task-button,
+.view-switch-button,
+.primary-button,
+.ghost-button {
+  border: none;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #374151;
+}
+
+.sidebar-toggle svg,
+.new-task-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sidebar-toggle--collapsed svg {
+  transform: scaleX(-1);
+}
+
+.new-task-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  border-radius: 16px;
+  background: #111827;
+  color: #f9fafb;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.image-main {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  min-width: 0;
+  padding: 24px;
 }
 
 .studio-stage-card,
 .prompt-card {
   position: relative;
   overflow: hidden;
+  padding: 28px;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 32px;
   background: rgba(255, 255, 255, 0.78);
@@ -217,11 +543,6 @@ async function handleRetry() {
   color: #4b5563;
   font-size: 15px;
   line-height: 1.9;
-}
-
-.studio-stage-card,
-.prompt-card {
-  padding: 28px;
 }
 
 .stage-header,
@@ -350,20 +671,6 @@ async function handleRetry() {
   background: rgba(17, 24, 39, 0.06);
 }
 
-.view-switch-button,
-.primary-button,
-.ghost-button {
-  border: none;
-  font: inherit;
-  cursor: pointer;
-  transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease,
-    color 0.2s ease,
-    border-color 0.2s ease;
-}
-
 .view-switch-button {
   padding: 10px 14px;
   border-radius: 999px;
@@ -392,7 +699,6 @@ async function handleRetry() {
   margin-top: 18px;
   padding: 2px 2px 12px;
   border: none;
-  border-radius: 0;
   background: transparent;
   color: #111827;
   font: inherit;
@@ -400,12 +706,6 @@ async function handleRetry() {
   line-height: 1.9;
   resize: vertical;
   outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
-}
-
-.prompt-textarea:focus {
-  box-shadow: none;
-  background: transparent;
 }
 
 .ghost-button {
@@ -417,10 +717,10 @@ async function handleRetry() {
   font-size: 14px;
 }
 
-.ghost-button:hover:not(:disabled) {
+.ghost-button:hover:not(:disabled),
+.sidebar-toggle:hover,
+.new-task-button:hover {
   transform: translateY(-1px);
-  border-color: rgba(17, 24, 39, 0.2);
-  background: #fff;
 }
 
 .primary-button {
@@ -435,11 +735,6 @@ async function handleRetry() {
   font-size: 14px;
   font-weight: 700;
   box-shadow: 0 14px 30px rgba(17, 24, 39, 0.16);
-}
-
-.primary-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 18px 36px rgba(17, 24, 39, 0.2);
 }
 
 .ghost-button--dark {
@@ -466,6 +761,17 @@ async function handleRetry() {
   border: 0;
 }
 
+@media (max-width: 1080px) {
+  .image-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .image-sidebar {
+    border-right: none;
+    border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+  }
+}
+
 @media (max-width: 960px) {
   .stage-header,
   .prompt-header,
@@ -486,6 +792,14 @@ async function handleRetry() {
 }
 
 @media (max-width: 640px) {
+  .image-main {
+    padding: 16px;
+  }
+
+  .image-sidebar {
+    padding: 16px;
+  }
+
   .studio-stage-card,
   .prompt-card {
     padding: 20px;
@@ -504,7 +818,6 @@ async function handleRetry() {
 
   .prompt-textarea {
     padding: 16px 18px;
-    border-radius: 20px;
   }
 
   .primary-button,

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
+import { useLocalChatHistory, type LocalChatMessage } from '~/composables/useLocalChatHistory'
+
 type ChatRole = 'user' | 'assistant'
 
 type ChatMessage = {
@@ -21,13 +24,6 @@ type MessageBlock =
   | { type: 'divider' }
   | { type: 'code', content: string }
 
-const quickQuestions = [
-  '帮我整理一套商业街夜景提案思路',
-  '把这段提示词改得更高级、更像真实摄影',
-  '给我 3 条提升夜景出图质感的具体建议',
-  '分析这张沿街立面的灯光层级应该怎么做',
-]
-
 const inputMessage = shallowRef('')
 const isLoading = shallowRef(false)
 const errorMessage = shallowRef('')
@@ -35,21 +31,18 @@ const currentModel = shallowRef('')
 const currentRequestId = shallowRef('')
 const messages = ref<ChatMessage[]>([])
 const messageListRef = useTemplateRef<HTMLDivElement>('messageListRef')
+const activeSessionId = shallowRef('')
+const isSidebarExpanded = shallowRef(true)
+const { clearSessions, deleteSession, getLatestSession, getSession, loadSessions, saveSession, sessions } = useLocalChatHistory()
 
 const canSend = computed(() => Boolean(inputMessage.value.trim()) && !isLoading.value)
 const hasConversation = computed(() => messages.value.length > 0)
-const sidebarActions = computed(() => [
-  {
-    title: '新对话',
-    description: '清空上下文，重新开始提问',
-    action: clearConversation,
-  },
-  {
-    title: '商业夜景',
-    description: '围绕夜景生成、灯光与提案表达继续发问',
-    action: () => appendQuestion('请从商业价值、灯光层级、街景氛围三个角度分析这张夜景图应该怎么优化'),
-  },
-])
+const recentSessions = computed(() => sessions.value.map(session => ({
+  id: session.id,
+  title: session.title,
+  subtitle: session.preview,
+  meta: formatRelativeTime(session.updatedAt),
+})))
 
 watch(
   () => [messages.value.length, isLoading.value],
@@ -65,15 +58,51 @@ watch(
   },
 )
 
-function appendQuestion(question: string) {
-  inputMessage.value = question
-}
+onMounted(() => {
+  loadSessions()
+
+  const latestSession = getLatestSession()
+
+  if (latestSession) {
+    openSession(latestSession.id)
+    return
+  }
+
+  activeSessionId.value = createSessionId()
+})
 
 function clearConversation() {
+  activeSessionId.value = createSessionId()
   messages.value = []
   currentRequestId.value = ''
   currentModel.value = ''
   errorMessage.value = ''
+}
+
+function toggleSidebar() {
+  isSidebarExpanded.value = !isSidebarExpanded.value
+}
+
+function handleDeleteSession(sessionId: string) {
+  deleteSession(sessionId)
+
+  if (activeSessionId.value !== sessionId) {
+    return
+  }
+
+  const latestSession = getLatestSession()
+
+  if (latestSession) {
+    openSession(latestSession.id)
+    return
+  }
+
+  clearConversation()
+}
+
+function handleClearSessions() {
+  clearSessions()
+  clearConversation()
 }
 
 async function sendMessage() {
@@ -118,6 +147,7 @@ async function sendMessage() {
       content: `当前请求失败：${message}`,
     })
   } finally {
+    saveSession(activeSessionId.value || createSessionId(), messages.value as LocalChatMessage[])
     isLoading.value = false
   }
 }
@@ -131,6 +161,37 @@ function handleKeydown(event: KeyboardEvent) {
 
 function createMessageId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function createSessionId() {
+  return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function openSession(sessionId: string) {
+  const session = getSession(sessionId)
+
+  if (!session) {
+    return
+  }
+
+  activeSessionId.value = session.id
+  messages.value = session.messages.map(message => ({ ...message }))
+  errorMessage.value = ''
+}
+
+function formatRelativeTime(value: string) {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
 }
 
 function formatInlineParts(content: string) {
@@ -236,58 +297,70 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 </script>
 
 <template>
-  <section class="chat-layout">
+  <section class="chat-layout" :class="{ 'chat-layout--collapsed': !isSidebarExpanded }">
     <aside class="chat-sidebar">
-      <div class="sidebar-brand">
-        <div class="brand-mark">
-          LB
+      <div class="sidebar-top">
+        <div v-if="isSidebarExpanded" class="sidebar-brand">
+          <div class="brand-mark">
+            LB
+          </div>
+          <div>
+            <p class="brand-name">
+              LightBuild AI
+            </p>
+            <p class="brand-subtitle">
+              Chat Workspace
+            </p>
+          </div>
         </div>
-        <div>
-          <p class="brand-name">
-            LightBuild AI
-          </p>
-          <p class="brand-subtitle">
-            Chat Workspace
-          </p>
-        </div>
+
+        <button
+          class="sidebar-toggle"
+          :class="{ 'sidebar-toggle--collapsed': !isSidebarExpanded }"
+          type="button"
+          :aria-label="isSidebarExpanded ? '收起侧边栏' : '展开侧边栏'"
+          @click="toggleSidebar"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M4.75 5.75A1.5 1.5 0 0 1 6.25 4.25h11.5a1.5 1.5 0 0 1 1.5 1.5v12.5a1.5 1.5 0 0 1-1.5 1.5H6.25a1.5 1.5 0 0 1-1.5-1.5zm2 .5v11.5h10.5V6.25zm2.5 0v11.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.6"
+            />
+          </svg>
+        </button>
       </div>
 
       <button class="new-chat-button" type="button" @click="clearConversation">
-        新建聊天
+        <svg v-if="!isSidebarExpanded" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12 5v14M5 12h14"
+            fill="none"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-width="1.8"
+          />
+        </svg>
+        <span v-else>新建聊天</span>
       </button>
 
-      <div class="sidebar-section">
-        <p class="sidebar-label">
-          快捷操作
-        </p>
-        <button
-          v-for="item in sidebarActions"
-          :key="item.title"
-          class="sidebar-card"
-          type="button"
-          @click="item.action()"
-        >
-          <span class="sidebar-card-title">{{ item.title }}</span>
-          <span class="sidebar-card-description">{{ item.description }}</span>
-        </button>
-      </div>
+      <RecentRecordsPanel
+        v-if="isSidebarExpanded"
+        title="最近"
+        :items="recentSessions"
+        :active-id="activeSessionId"
+        empty-text="暂无聊天记录"
+        show-clear
+        show-delete
+        @select="openSession"
+        @delete="handleDeleteSession"
+        @clear="handleClearSessions"
+      />
 
-      <div class="sidebar-section">
-        <p class="sidebar-label">
-          灵感问题
-        </p>
-        <button
-          v-for="question in quickQuestions"
-          :key="question"
-          class="sidebar-link"
-          type="button"
-          @click="appendQuestion(question)"
-        >
-          {{ question }}
-        </button>
-      </div>
-
-      <div class="sidebar-footer">
+      <div v-if="isSidebarExpanded" class="sidebar-footer">
         <p class="sidebar-meta">
           {{ currentModel || 'TokenHub Chat' }}
         </p>
@@ -307,20 +380,8 @@ function parseMessageBlocks(content: string): MessageBlock[] {
             今天想一起打磨哪一段夜景表达？
           </h1>
           <p class="welcome-description">
-            这里的布局参考了 `chatgpt.com` 当前公开聊天页的核心结构：左侧导航，主区域居中，底部固定输入器；但视觉上收敛为更温和的建筑与提案语境。
+            保留清晰的对话结构与克制的留白，让讨论更聚焦在方案、表达与判断本身。
           </p>
-
-          <div class="welcome-grid">
-            <button
-              v-for="question in quickQuestions"
-              :key="question"
-              class="welcome-card"
-              type="button"
-              @click="appendQuestion(question)"
-            >
-              {{ question }}
-            </button>
-          </div>
         </div>
 
         <div v-else class="message-thread">
@@ -427,6 +488,10 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   backdrop-filter: blur(18px);
 }
 
+.chat-layout--collapsed {
+  grid-template-columns: 88px minmax(0, 1fr);
+}
+
 .chat-sidebar {
   display: flex;
   flex-direction: column;
@@ -434,6 +499,13 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   padding: 22px;
   border-right: 1px solid rgba(17, 24, 39, 0.08);
   background: rgba(244, 244, 245, 0.92);
+}
+
+.sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .sidebar-brand {
@@ -484,10 +556,10 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   line-height: 1.7;
 }
 
+.sidebar-toggle,
 .new-chat-button,
 .sidebar-card,
 .sidebar-link,
-.welcome-card,
 .send-button {
   border: none;
   font: inherit;
@@ -497,6 +569,28 @@ function parseMessageBlocks(content: string): MessageBlock[] {
     background-color 0.2s ease,
     box-shadow 0.2s ease,
     border-color 0.2s ease;
+}
+
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #4b5563;
+}
+
+.sidebar-toggle svg,
+.new-chat-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sidebar-toggle--collapsed svg {
+  transform: scaleX(-1);
 }
 
 .new-chat-button {
@@ -512,14 +606,9 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 }
 
 .new-chat-button:hover,
+.sidebar-toggle:hover,
 .send-button:hover:not(:disabled) {
   transform: translateY(-1px);
-}
-
-.sidebar-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
 
 .sidebar-label,
@@ -529,46 +618,6 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   letter-spacing: 0.22em;
   text-transform: uppercase;
 }
-
-.sidebar-card,
-.sidebar-link {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-  padding: 14px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.74);
-  color: #111827;
-  text-align: left;
-}
-
-.sidebar-card:hover,
-.sidebar-link:hover,
-.welcome-card:hover {
-  background: #fff;
-  border-color: rgba(17, 24, 39, 0.14);
-}
-
-.sidebar-card-title {
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.sidebar-card-description {
-  color: #6b7280;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.sidebar-link {
-  padding: 12px 14px;
-  color: #374151;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
 .sidebar-footer {
   margin-top: auto;
   padding-top: 8px;
@@ -616,25 +665,6 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 .welcome-description {
   max-width: 760px;
   margin-top: 18px;
-}
-
-.welcome-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 28px;
-}
-
-.welcome-card {
-  min-height: 88px;
-  padding: 18px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.74);
-  color: #111827;
-  font-size: 14px;
-  line-height: 1.8;
-  text-align: left;
 }
 
 .message-thread {
@@ -894,14 +924,15 @@ function parseMessageBlocks(content: string): MessageBlock[] {
     grid-template-columns: 1fr;
   }
 
+  .chat-layout--collapsed {
+    grid-template-columns: 1fr;
+  }
+
   .chat-sidebar {
     border-right: none;
     border-bottom: 1px solid rgba(17, 24, 39, 0.08);
   }
 
-  .welcome-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 640px) {

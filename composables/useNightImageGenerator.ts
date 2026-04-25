@@ -47,6 +47,7 @@ const MAX_IMAGE_DIMENSION = 1600
 
 export function useNightImageGenerator() {
   const sourceFile = shallowRef<File | null>(null)
+  const sourceRemoteUrl = shallowRef('')
   const sourcePreviewUrl = shallowRef('')
   const resultUrl = shallowRef('')
   const currentProvider = shallowRef<'hunyuan-text-to-image' | 'tokenhub-reference-image' | ''>('')
@@ -116,6 +117,7 @@ export function useNightImageGenerator() {
     }
 
     sourceFile.value = selectedFile
+    sourceRemoteUrl.value = ''
     sourcePreviewUrl.value = URL.createObjectURL(selectedFile)
     resultUrl.value = ''
     sourceFileHint.value = buildFileHint(selectedFile)
@@ -135,6 +137,48 @@ export function useNightImageGenerator() {
     activeView.value = view
   }
 
+  function resetGenerator() {
+    sourceFile.value = null
+    sourceRemoteUrl.value = ''
+    sourcePreviewUrl.value = ''
+    resultUrl.value = ''
+    customPrompt.value = ''
+    taskStatus.value = ''
+    currentTaskId.value = ''
+    currentProvider.value = ''
+    currentRequestId.value = ''
+    currentSeed.value = null
+    currentSize.value = ''
+    revisedPrompt.value = ''
+    sourceFileHint.value = ''
+    canRetry.value = false
+    activeView.value = 'source'
+  }
+
+  function restoreHistorySnapshot(snapshot: {
+    sourceImageUrl?: string
+    resultImageUrl?: string
+    prompt?: string
+    status?: string
+    taskId?: string
+  }) {
+    sourceFile.value = null
+    sourceRemoteUrl.value = snapshot.sourceImageUrl?.trim() || ''
+    sourcePreviewUrl.value = snapshot.sourceImageUrl?.trim() || ''
+    resultUrl.value = snapshot.resultImageUrl?.trim() || ''
+    customPrompt.value = snapshot.prompt?.trim() || ''
+    taskStatus.value = snapshot.status?.trim() || ''
+    currentTaskId.value = snapshot.taskId?.trim() || ''
+    currentProvider.value = ''
+    currentRequestId.value = ''
+    currentSeed.value = null
+    currentSize.value = ''
+    revisedPrompt.value = ''
+    sourceFileHint.value = ''
+    canRetry.value = Boolean(resultUrl.value || sourcePreviewUrl.value)
+    activeView.value = resultUrl.value ? 'result' : 'source'
+  }
+
   async function generateNightImage() {
     isLoading.value = true
     resultUrl.value = ''
@@ -150,7 +194,7 @@ export function useNightImageGenerator() {
     activeView.value = 'source'
 
     try {
-      let originalUrl: string | undefined
+      let originalUrl: string | undefined = sourceRemoteUrl.value || undefined
       let preparedFileMeta: Awaited<ReturnType<typeof prepareUploadFile>> | null = null
       let originalImageDimensions: { width: number, height: number } | null = null
 
@@ -170,6 +214,7 @@ export function useNightImageGenerator() {
         })
 
         originalUrl = uploadResponse.url
+        sourceRemoteUrl.value = uploadResponse.url
       }
 
       taskStatus.value = originalUrl ? '已上传，正在提交生成任务...' : '正在提交生成任务...'
@@ -285,6 +330,8 @@ export function useNightImageGenerator() {
     isLoading,
     loadingText,
     onFileChange,
+    resetGenerator,
+    restoreHistorySnapshot,
     sourceFileHint,
     revisedPrompt,
     revisePrompt,

@@ -45,7 +45,7 @@ export default defineEventHandler(async (event) => {
     secretId: config.tencentcloudSecretId,
     secretKey: config.tencentcloudSecretKey,
     region: config.tencentcloudRegion,
-    tokenHubApiKey: config.tokenHubApiKey,
+    tokenHubApiKey: config.tokenHubImageApiKey,
     publicOrigin: getRequestURL(event).origin,
   })
 

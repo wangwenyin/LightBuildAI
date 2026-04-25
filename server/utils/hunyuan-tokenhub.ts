@@ -82,7 +82,7 @@ export async function submitTokenHubReferenceImageJob({
 
 export async function queryTokenHubImageJob(taskId: string, tokenHubApiKey?: string): Promise<QueryNightImageJobResult> {
   if (!tokenHubApiKey) {
-    throw new Error('缺少 TokenHub API Key，请在 .env 中配置 TokenHub_API_KEY')
+    throw new Error('缺少 TokenHub API Key，请在 .env 中配置 TOKENHUB_API_KEY_IMAGE')
   }
 
   const response = await fetch(TOKENHUB_QUERY_URL, {

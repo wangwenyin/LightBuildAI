@@ -89,29 +89,8 @@ function appendPrompt(promptSegment: string) {
 </script>
 
 <template>
-  <div class="studio-page">
-    <div class="studio-shell">
-      <header class="hero-card">
-        <div class="hero-copy">
-          <p class="hero-kicker">LIGHTBUILD AI</p>
-          <h1 class="hero-title">商业夜景 AI 出图工作台</h1>
-          <p class="hero-description">
-            上传参考图，系统自动叠加专业夜景渲染规则，并结合你的个性化提示词生成更稳定、更高级的商业街效果图。
-          </p>
-        </div>
-        <div class="hero-metrics">
-          <div class="metric-card">
-            <span class="metric-label">系统规则</span>
-            <strong class="metric-value">{{ promptRuleCount }}</strong>
-          </div>
-          <div class="metric-card">
-            <span class="metric-label">任务状态</span>
-            <strong class="metric-value">{{ isLoading ? loadingText : '待开始' }}</strong>
-          </div>
-        </div>
-      </header>
-
-      <main class="workspace-grid">
+  <div class="studio-shell">
+    <main class="workspace-grid">
         <section class="stage-card">
           <div class="stage-toolbar">
             <div>
@@ -309,27 +288,15 @@ function appendPrompt(promptSegment: string) {
             </p>
           </div>
         </aside>
-      </main>
-    </div>
+    </main>
   </div>
 </template>
 
 <style scoped>
-.studio-page {
-  min-height: 100vh;
-  padding: 32px;
-  background:
-    radial-gradient(circle at top left, rgba(94, 106, 210, 0.18), transparent 30%),
-    radial-gradient(circle at top right, rgba(0, 196, 255, 0.12), transparent 24%),
-    linear-gradient(180deg, #f4f7fb 0%, #eef2f8 100%);
-}
-
 .studio-shell {
-  max-width: 1440px;
-  margin: 0 auto;
+  width: 100%;
 }
 
-.hero-card,
 .stage-card,
 .control-card {
   border: 1px solid rgba(15, 23, 42, 0.08);
@@ -338,20 +305,6 @@ function appendPrompt(promptSegment: string) {
   backdrop-filter: blur(18px);
 }
 
-.hero-card {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 24px;
-  padding: 28px;
-  border-radius: 28px;
-}
-
-.hero-copy {
-  max-width: 760px;
-}
-
-.hero-kicker,
 .section-eyebrow {
   margin: 0 0 10px;
   font-size: 12px;
@@ -361,50 +314,11 @@ function appendPrompt(promptSegment: string) {
   text-transform: uppercase;
 }
 
-.hero-title,
 .section-title {
   margin: 0;
   color: #0f172a;
-}
-
-.hero-title {
-  font-size: 36px;
-  line-height: 1.15;
-}
-
-.hero-description {
-  margin: 16px 0 0;
-  font-size: 15px;
-  line-height: 1.75;
-  color: #475569;
-}
-
-.hero-metrics {
-  display: grid;
-  min-width: 260px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.metric-card {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  min-height: 120px;
-  padding: 18px;
-  border-radius: 20px;
-  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-}
-
-.metric-label {
-  font-size: 12px;
-  color: rgba(226, 232, 240, 0.7);
-}
-
-.metric-value {
   font-size: 28px;
   line-height: 1.1;
-  color: #f8fafc;
 }
 
 .workspace-grid {
@@ -776,36 +690,15 @@ function appendPrompt(promptSegment: string) {
     grid-template-columns: 1fr;
   }
 
-  .hero-card {
-    flex-direction: column;
-  }
-
-  .hero-metrics {
-    min-width: 0;
-  }
-
   .image-stage {
     min-height: 520px;
   }
 }
 
 @media (max-width: 768px) {
-  .studio-page {
-    padding: 16px;
-  }
-
-  .hero-card,
   .stage-card,
   .control-card {
     border-radius: 22px;
-  }
-
-  .hero-title {
-    font-size: 30px;
-  }
-
-  .hero-metrics {
-    grid-template-columns: 1fr;
   }
 
   .stage-toolbar,

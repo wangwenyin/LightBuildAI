@@ -22,7 +22,7 @@ export async function submitNightImageJob({
 }: SubmitNightImageJobParams): Promise<SubmitNightImageJobResult> {
   if (originalUrl) {
     if (!tokenHubApiKey) {
-      throw new Error('参考图生成已固定走 TokenHub，请在 .env 中配置 TokenHub_API_KEY')
+      throw new Error('参考图生成已固定走 TokenHub，请在 .env 中配置 TOKENHUB_API_KEY_IMAGE')
     }
 
     return submitTokenHubReferenceImageJob({

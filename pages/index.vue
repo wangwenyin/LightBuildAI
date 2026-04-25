@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import NightImageStudio from '~/components/ai-image/NightImageStudio.vue'
+import AiWorkspaceTabs from '~/components/home/AiWorkspaceTabs.vue'
 </script>
 
 <template>
-  <NightImageStudio />
+  <AiWorkspaceTabs />
 </template>

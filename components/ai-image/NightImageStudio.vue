@@ -1,25 +1,7 @@
 <script setup lang="ts">
-import { defaultNightPromptRules } from '~/shared/nightPrompt'
-import { getProviderLabel, useNightImageGenerator } from '~/composables/useNightImageGenerator'
-
-const quickPromptChips = [
-  '灯光更高级，适合商业街宣传',
-  '树上灯笼更密一些，但保持真实感',
-  '广告牌清晰发光，整体更繁华',
-  '画面更通透，减少暗部死黑',
-]
-
 const {
   activeView,
   canRetry,
-  copyTaskId,
-  currentProvider,
-  currentRequestId,
-  currentSeed,
-  currentSize,
-  currentTaskId,
-  enableNegativePrompt,
-  customNegativePrompt,
   customPrompt,
   displayedImageUrl,
   downloadResult,
@@ -29,29 +11,30 @@ const {
   isLoading,
   loadingText,
   onFileChange,
-  revisedPrompt,
-  revisePrompt,
-  sourceFileHint,
+  setActiveView,
   statusVariant,
   taskStatus,
   retryGenerate,
-  setActiveView,
 } = useNightImageGenerator()
 
-const providerLabel = computed(() => getProviderLabel(currentProvider.value))
-const showDebugPanel = computed(() => Boolean(currentTaskId.value || currentProvider.value || currentRequestId.value || revisedPrompt.value))
-
-const promptRuleCount = computed(() => defaultNightPromptRules.length)
 const stageTitle = computed(() => {
   if (hasResultImage.value && activeView.value === 'result') {
-    return '生成结果'
+    return '夜景成片'
   }
 
   if (hasSourceImage.value) {
-    return '原始参考图'
+    return '参考原图'
   }
 
-  return '等待上传参考图'
+  return '上传参考图，开始夜景生成'
+})
+
+const primaryActionLabel = computed(() => {
+  if (isLoading.value) {
+    return loadingText.value
+  }
+
+  return hasResultImage.value ? '再次生成' : '开始生成夜景'
 })
 
 async function handleGenerate() {
@@ -71,301 +54,215 @@ async function handleRetry() {
     window.alert(`失败：${message}`)
   }
 }
-
-async function handleCopyTaskId() {
-  try {
-    await copyTaskId()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '复制失败'
-    window.alert(message)
-  }
-}
-
-function appendPrompt(promptSegment: string) {
-  customPrompt.value = customPrompt.value
-    ? `${customPrompt.value}；${promptSegment}`
-    : promptSegment
-}
 </script>
 
 <template>
-  <div class="studio-shell">
-    <main class="workspace-grid">
-        <section class="stage-card">
-          <div class="stage-toolbar">
-            <div>
-              <p class="section-eyebrow">预览区</p>
-              <h2 class="section-title">{{ stageTitle }}</h2>
-            </div>
+  <section class="image-studio">
+    <div class="studio-stage-card">
+      <div class="stage-header">
+        <div class="stage-title-group">
+          <p class="section-label">
+            Visual Stage
+          </p>
+          <h2 class="stage-title">
+            {{ stageTitle }}
+          </h2>
+        </div>
 
-            <div v-if="hasSourceImage" class="view-switch">
-              <button
-                class="view-switch-button"
-                :class="{ 'view-switch-button--active': activeView === 'source' }"
-                type="button"
-                @click="setActiveView('source')"
-              >
-                原图
-              </button>
-              <button
-                class="view-switch-button"
-                :class="{ 'view-switch-button--active': activeView === 'result' }"
-                type="button"
-                :disabled="!hasResultImage"
-                @click="setActiveView('result')"
-              >
-                结果
-              </button>
-            </div>
-          </div>
-
-          <div class="image-stage">
-            <div v-if="displayedImageUrl" class="image-wrapper">
-              <img :src="displayedImageUrl" :alt="stageTitle" class="stage-image">
-
-              <button
-                v-if="hasResultImage && activeView === 'result'"
-                class="download-button"
-                type="button"
-                @click="downloadResult"
-              >
-                下载图片
-              </button>
-            </div>
-
-            <label v-else class="empty-state" for="source-file-input">
-              <span class="empty-icon">✦</span>
-              <strong class="empty-title">上传一张白天街景或商业外立面图片</strong>
-              <span class="empty-description">
-                支持 JPG、PNG，建议上传主体清晰、透视明确的图片，以获得更稳定的夜景生成效果。
-              </span>
-            </label>
-          </div>
-
-          <div v-if="taskStatus" class="status-bar" :class="`status-bar--${statusVariant}`">
-            {{ taskStatus }}
-          </div>
-        </section>
-
-        <aside class="control-card">
-          <div class="panel-block">
-            <div class="block-heading">
-              <div>
-                <p class="section-eyebrow">工作区</p>
-                <h2 class="section-title">上传与设置</h2>
-              </div>
-
-              <label class="upload-button" for="source-file-input">
-                选择图片
-              </label>
-              <input
-                id="source-file-input"
-                class="visually-hidden"
-                type="file"
-                accept="image/*"
-                @change="onFileChange"
-              >
-            </div>
-            <p v-if="sourceFileHint" class="panel-tip">
-              {{ sourceFileHint }}
-            </p>
-          </div>
-
-          <div class="panel-block">
-            <p class="section-eyebrow">提示词</p>
-            <h2 class="section-title">补充你的创作要求</h2>
-            <p class="panel-tip">
-              系统会自动注入 {{ promptRuleCount }} 条通用生图规则，你只需要描述本次想强调的风格、氛围、灯光或细节。
-            </p>
-            <textarea
-              v-model="customPrompt"
-              class="prompt-textarea"
-              placeholder="请输入对图片画面的要求"
-              rows="6"
-            />
-
-            <label class="toggle-row">
-              <input
-                v-model="revisePrompt"
-                class="toggle-checkbox"
-                type="checkbox"
-              >
-              <span>开启混元自动扩写提示词</span>
-            </label>
-
-            <label class="toggle-row">
-              <input
-                v-model="enableNegativePrompt"
-                class="toggle-checkbox"
-                type="checkbox"
-              >
-              <span>开启负向提示词</span>
-            </label>
-
-            <textarea
-              v-if="enableNegativePrompt"
-              v-model="customNegativePrompt"
-              class="prompt-textarea prompt-textarea--secondary"
-              placeholder="请输入不希望出现的问题，例如：不要白天感、不要乱码广告字、不要室内过亮"
-              rows="4"
-            />
-
-            <p v-if="enableNegativePrompt" class="panel-tip">
-              负向提示词会与系统默认约束一起提交；如果上传参考图，即使关闭扩写，接口仍可能继续自动扩写。
-            </p>
-
-            <div class="chip-list">
-              <button
-                v-for="chip in quickPromptChips"
-                :key="chip"
-                class="chip-button"
-                type="button"
-                @click="appendPrompt(chip)"
-              >
-                {{ chip }}
-              </button>
-            </div>
-          </div>
-
-          <div class="panel-block panel-block--actions">
+        <div class="stage-tools">
+          <div v-if="hasSourceImage" class="view-switch" role="tablist" aria-label="切换预览">
             <button
-              class="primary-button"
+              class="view-switch-button"
+              :class="{ 'view-switch-button--active': activeView === 'source' }"
               type="button"
-              :disabled="isLoading"
-              @click="handleGenerate"
+              @click="setActiveView('source')"
             >
-              {{ isLoading ? loadingText : '开始生成夜景' }}
+              原图
             </button>
-
-            <div class="secondary-actions">
-              <button
-                class="secondary-button"
-                type="button"
-                :disabled="!canRetry || isLoading"
-                @click="handleRetry"
-              >
-                重新生成
-              </button>
-              <button
-                class="secondary-button"
-                type="button"
-                :disabled="!currentTaskId"
-                @click="handleCopyTaskId"
-              >
-                复制任务号
-              </button>
-            </div>
+            <button
+              class="view-switch-button"
+              :class="{ 'view-switch-button--active': activeView === 'result' }"
+              type="button"
+              :disabled="!hasResultImage"
+              @click="setActiveView('result')"
+            >
+              夜景
+            </button>
           </div>
 
-          <div v-if="showDebugPanel" class="panel-block">
-            <p class="section-eyebrow">调试信息</p>
-            <h2 class="section-title">当前生成通道</h2>
-            <dl class="debug-meta">
-              <div class="debug-meta-row">
-                <dt>生成通道</dt>
-                <dd>{{ providerLabel }}</dd>
-              </div>
-              <div v-if="currentTaskId" class="debug-meta-row">
-                <dt>任务号</dt>
-                <dd>{{ currentTaskId }}</dd>
-              </div>
-              <div v-if="currentRequestId" class="debug-meta-row">
-                <dt>请求 ID</dt>
-                <dd>{{ currentRequestId }}</dd>
-              </div>
-              <div v-if="currentSize" class="debug-meta-row">
-                <dt>生成尺寸</dt>
-                <dd>{{ currentSize }}</dd>
-              </div>
-              <div v-if="currentSeed !== null" class="debug-meta-row">
-                <dt>随机种子</dt>
-                <dd>{{ currentSeed }}</dd>
-              </div>
-            </dl>
-            <h3 v-if="revisedPrompt" class="debug-subtitle">模型实际扩写 Prompt</h3>
-            <p v-if="revisedPrompt" class="debug-prompt">
-              {{ revisedPrompt }}
-            </p>
-          </div>
-        </aside>
-    </main>
-  </div>
+          <button
+            v-if="hasResultImage && activeView === 'result'"
+            class="ghost-button ghost-button--dark"
+            type="button"
+            @click="downloadResult"
+          >
+            下载成片
+          </button>
+        </div>
+      </div>
+
+      <div class="image-stage">
+        <div v-if="displayedImageUrl" class="image-wrapper">
+          <img :src="displayedImageUrl" :alt="stageTitle" class="stage-image">
+        </div>
+
+        <label v-else class="empty-state" for="source-file-input">
+          <span class="empty-badge">NIGHT</span>
+          <strong class="empty-title">拖入或上传一张白天参考图</strong>
+          <span class="empty-description">
+            建议选择主体清晰、透视明确的商业街景或建筑立面，以获得更稳定、更真实的夜景表达。
+          </span>
+        </label>
+      </div>
+
+      <div class="stage-footer">
+        <p class="stage-note">
+          支持 JPG、PNG；建议使用清晰原图，避免严重逆光或主体过小。
+        </p>
+
+        <div v-if="taskStatus" class="status-pill" :class="`status-pill--${statusVariant}`">
+          {{ taskStatus }}
+        </div>
+      </div>
+    </div>
+
+    <section class="prompt-card">
+      <div class="prompt-header">
+        <p class="section-label">
+          Prompt Composer
+        </p>
+        <h2 class="prompt-title">
+          上传图片，然后描述你想要的夜景气质。
+        </h2>
+      </div>
+
+      <textarea
+        v-model="customPrompt"
+        class="prompt-textarea"
+        placeholder="例如：整体更像高端商业街夜景，门头灯光克制而有层次，橱窗暖光通透，路面反射细腻，避免廉价霓虹感。"
+        rows="5"
+      />
+
+      <div class="prompt-actions">
+        <label class="ghost-button" for="source-file-input">
+          {{ hasSourceImage ? '更换图片' : '上传参考图' }}
+        </label>
+        <button
+          class="primary-button"
+          type="button"
+          :disabled="isLoading"
+          @click="handleGenerate"
+        >
+          {{ primaryActionLabel }}
+        </button>
+        <button
+          class="ghost-button"
+          type="button"
+          :disabled="!canRetry || isLoading"
+          @click="handleRetry"
+        >
+          重新生成
+        </button>
+      </div>
+
+      <input
+        id="source-file-input"
+        class="visually-hidden"
+        type="file"
+        accept="image/*"
+        @change="onFileChange"
+      >
+    </section>
+  </section>
 </template>
 
 <style scoped>
-.studio-shell {
-  width: 100%;
-}
-
-.stage-card,
-.control-card {
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
-  backdrop-filter: blur(18px);
-}
-
-.section-eyebrow {
-  margin: 0 0 10px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  color: #64748b;
-  text-transform: uppercase;
-}
-
-.section-title {
-  margin: 0;
-  color: #0f172a;
-  font-size: 28px;
-  line-height: 1.1;
-}
-
-.workspace-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.75fr) minmax(360px, 420px);
+.image-studio {
+  display: flex;
+  flex-direction: column;
   gap: 24px;
 }
 
-.stage-card,
-.control-card {
-  border-radius: 28px;
+.studio-stage-card,
+.prompt-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 32px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(18px);
 }
 
-.stage-card {
-  padding: 24px;
+.section-label {
+  margin: 0 0 12px;
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
 }
 
-.stage-toolbar,
-.block-heading,
-.panel-block--actions,
-.secondary-actions {
+.prompt-title,
+.stage-title {
+  margin: 0;
+  color: #111827;
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  letter-spacing: -0.02em;
+}
+
+.stage-note {
+  margin: 16px 0 0;
+  max-width: 720px;
+  color: #4b5563;
+  font-size: 15px;
+  line-height: 1.9;
+}
+
+.studio-stage-card,
+.prompt-card {
+  padding: 28px;
+}
+
+.stage-header,
+.stage-tools,
+.prompt-header,
+.prompt-actions {
   display: flex;
   align-items: center;
 }
 
-.stage-toolbar,
-.block-heading {
+.stage-header,
+.prompt-header {
   justify-content: space-between;
   gap: 16px;
+}
+
+.stage-tools,
+.prompt-actions {
+  gap: 12px;
+}
+
+.stage-title {
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.15;
 }
 
 .image-stage {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 680px;
-  margin-top: 18px;
-  border-radius: 24px;
+  min-height: 720px;
+  margin-top: 24px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 28px;
   background:
-    linear-gradient(180deg, rgba(248, 250, 252, 0.9), rgba(226, 232, 240, 0.82)),
-    #f8fafc;
-  border: 1px solid rgba(148, 163, 184, 0.22);
+    linear-gradient(180deg, rgba(250, 250, 249, 0.88), rgba(229, 231, 235, 0.82)),
+    #f5f5f4;
   overflow: hidden;
 }
 
 .image-wrapper {
-  position: relative;
   width: 100%;
   height: 100%;
 }
@@ -374,28 +271,8 @@ function appendPrompt(promptSegment: string) {
   display: block;
   width: 100%;
   height: 100%;
-  max-height: 720px;
+  max-height: 820px;
   object-fit: contain;
-  background: linear-gradient(180deg, #f8fafc, #e2e8f0);
-}
-
-.download-button {
-  position: absolute;
-  right: 20px;
-  bottom: 20px;
-  padding: 12px 18px;
-  border: none;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.9);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.28);
-}
-
-.download-button:hover {
-  background: #020617;
 }
 
 .empty-state {
@@ -403,274 +280,178 @@ function appendPrompt(promptSegment: string) {
   width: min(520px, 100%);
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   padding: 32px;
-  color: #334155;
   text-align: center;
   cursor: pointer;
 }
 
-.empty-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 68px;
-  height: 68px;
-  border-radius: 22px;
-  background: linear-gradient(135deg, #dbeafe, #e9d5ff);
-  font-size: 30px;
-  color: #1d4ed8;
+.empty-badge {
+  padding: 8px 14px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #111827;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
 }
 
 .empty-title {
-  font-size: 20px;
-  color: #0f172a;
+  color: #111827;
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  font-size: 30px;
+  line-height: 1.3;
 }
 
-.empty-description,
-.panel-tip,
-.task-id {
+.empty-description {
+  color: #6b7280;
   font-size: 14px;
-  line-height: 1.7;
-  color: #64748b;
+  line-height: 1.9;
 }
 
-.status-bar {
+.stage-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
   margin-top: 18px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  font-size: 14px;
+}
+
+.status-pill {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-radius: 999px;
+  font-size: 13px;
   line-height: 1.6;
 }
 
-.status-bar--neutral,
-.status-bar--info {
-  background: rgba(59, 130, 246, 0.08);
-  color: #1d4ed8;
+.status-pill--neutral,
+.status-pill--info {
+  background: rgba(15, 23, 42, 0.06);
+  color: #1f2937;
 }
 
-.status-bar--success {
-  background: rgba(34, 197, 94, 0.12);
-  color: #15803d;
+.status-pill--success {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
 }
 
-.status-bar--error {
-  background: rgba(239, 68, 68, 0.1);
+.status-pill--error {
+  background: rgba(239, 68, 68, 0.12);
   color: #b91c1c;
 }
 
 .view-switch {
   display: inline-flex;
-  gap: 8px;
+  gap: 6px;
   padding: 6px;
   border-radius: 999px;
-  background: #e2e8f0;
+  background: rgba(17, 24, 39, 0.06);
 }
 
 .view-switch-button,
-.chip-button,
-.upload-button,
-.secondary-button,
-.primary-button {
+.primary-button,
+.ghost-button {
   border: none;
+  font: inherit;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .view-switch-button {
   padding: 10px 14px;
   border-radius: 999px;
   background: transparent;
-  color: #475569;
+  color: #4b5563;
   font-size: 13px;
   font-weight: 600;
 }
 
 .view-switch-button--active {
   background: #fff;
-  color: #0f172a;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  color: #111827;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
 }
 
 .view-switch-button:disabled,
-.secondary-button:disabled,
-.primary-button:disabled {
-  opacity: 0.48;
+.primary-button:disabled,
+.ghost-button:disabled {
   cursor: not-allowed;
-}
-
-.control-card {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 24px;
-}
-
-.panel-block {
-  padding: 20px;
-  border-radius: 24px;
-  background: rgba(248, 250, 252, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  opacity: 0.5;
 }
 
 .prompt-textarea {
   width: 100%;
-  min-height: 144px;
-  margin-top: 14px;
-  padding: 14px 16px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  border-radius: 18px;
-  background: #fff;
-  color: #0f172a;
+  min-height: 108px;
+  margin-top: 18px;
+  padding: 2px 2px 12px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #111827;
   font: inherit;
-  line-height: 1.7;
+  font-size: 15px;
+  line-height: 1.9;
   resize: vertical;
   outline: none;
-}
-
-.prompt-textarea--secondary {
-  min-height: 112px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
 .prompt-textarea:focus {
-  border-color: rgba(59, 130, 246, 0.45);
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.08);
+  box-shadow: none;
+  background: transparent;
 }
 
-.toggle-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 14px;
-  color: #334155;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.toggle-checkbox {
-  width: 16px;
-  height: 16px;
-}
-
-.debug-prompt {
-  margin: 12px 0 0;
-  padding: 14px 16px;
-  border-radius: 18px;
-  background: #fff;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  color: #334155;
-  font-size: 13px;
-  line-height: 1.8;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.debug-meta {
-  display: grid;
-  gap: 10px;
-  margin: 14px 0 0;
-}
-
-.debug-meta-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: #fff;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-}
-
-.debug-meta-row dt {
-  color: #64748b;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.debug-meta-row dd {
-  margin: 0;
-  color: #0f172a;
-  font-size: 13px;
-  text-align: right;
-  word-break: break-word;
-}
-
-.debug-subtitle {
-  margin: 16px 0 0;
-  color: #0f172a;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.chip-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.chip-button {
-  padding: 10px 14px;
+.ghost-button {
+  padding: 12px 16px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
   border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.ghost-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(17, 24, 39, 0.2);
   background: #fff;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 500;
-  border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
-.chip-button:hover,
-.secondary-button:hover {
-  border-color: rgba(59, 130, 246, 0.32);
-  color: #1d4ed8;
-}
-
-.upload-button,
-.secondary-button,
 .primary-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 46px;
-  padding: 0 18px;
-  border-radius: 14px;
+  min-height: 48px;
+  padding: 0 22px;
+  border-radius: 999px;
+  background: #111827;
+  color: #f9fafb;
   font-size: 14px;
-  font-weight: 600;
-}
-
-.upload-button {
-  background: #e2e8f0;
-  color: #0f172a;
-}
-
-.primary-button {
-  width: 100%;
-  background: linear-gradient(135deg, #2563eb, #7c3aed);
-  color: #fff;
-  box-shadow: 0 14px 28px rgba(79, 70, 229, 0.28);
+  font-weight: 700;
+  box-shadow: 0 14px 30px rgba(17, 24, 39, 0.16);
 }
 
 .primary-button:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 18px 32px rgba(79, 70, 229, 0.32);
+  box-shadow: 0 18px 36px rgba(17, 24, 39, 0.2);
 }
 
-.secondary-actions {
-  gap: 12px;
-  margin-top: 12px;
+.ghost-button--dark {
+  background: rgba(17, 24, 39, 0.92);
+  color: #f9fafb;
 }
 
-.secondary-button {
-  flex: 1;
-  background: #fff;
-  color: #334155;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-}
-
-.panel-block--actions {
-  flex-direction: column;
-  align-items: stretch;
+.prompt-actions {
+  justify-content: space-between;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(17, 24, 39, 0.08);
 }
 
 .visually-hidden {
@@ -685,36 +466,50 @@ function appendPrompt(promptSegment: string) {
   border: 0;
 }
 
-@media (max-width: 1120px) {
-  .workspace-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 960px) {
+  .stage-header,
+  .prompt-header,
+  .stage-footer {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .image-stage {
-    min-height: 520px;
+    min-height: 480px;
+  }
+
+  .prompt-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 }
 
-@media (max-width: 768px) {
-  .stage-card,
-  .control-card {
-    border-radius: 22px;
+@media (max-width: 640px) {
+  .studio-stage-card,
+  .prompt-card {
+    padding: 20px;
+    border-radius: 24px;
   }
 
-  .stage-toolbar,
-  .block-heading,
-  .secondary-actions {
-    flex-direction: column;
-    align-items: stretch;
+  .stage-title,
+  .empty-title {
+    font-size: 24px;
   }
 
   .image-stage {
-    min-height: 360px;
+    min-height: 340px;
+    border-radius: 22px;
   }
 
-  .download-button {
-    right: 14px;
-    bottom: 14px;
+  .prompt-textarea {
+    padding: 16px 18px;
+    border-radius: 20px;
+  }
+
+  .primary-button,
+  .ghost-button {
+    width: 100%;
   }
 }
 </style>

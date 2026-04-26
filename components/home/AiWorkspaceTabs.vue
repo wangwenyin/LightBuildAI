@@ -19,7 +19,7 @@ const tabs: Array<{
   {
     key: 'chat',
     label: 'AI 聊天',
-    description: '以 ChatGPT 风格布局完成对话与辅助创作',
+    description: '有问题，尽管问',
   },
 ]
 </script>
@@ -68,7 +68,7 @@ const tabs: Array<{
 <style scoped>
 .workspace-page {
   min-height: 100vh;
-  padding: 28px;
+  padding: 16px;
   background:
     radial-gradient(circle at top left, rgba(245, 158, 11, 0.12), transparent 28%),
     radial-gradient(circle at top right, rgba(59, 130, 246, 0.08), transparent 24%),
@@ -107,7 +107,7 @@ const tabs: Array<{
   margin: 0;
   color: #111827;
   font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
-  font-size: clamp(34px, 5vw, 48px);
+  font-size: clamp(34px, 5vw, 32px);
   line-height: 1.08;
   letter-spacing: -0.03em;
 }
@@ -115,7 +115,7 @@ const tabs: Array<{
 .workspace-subtitle {
   margin: 0;
   color: #57534e;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.8;
 }
 

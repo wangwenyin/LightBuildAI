@@ -304,14 +304,6 @@ function parseMessageBlocks(content: string): MessageBlock[] {
           <div class="brand-mark">
             LB
           </div>
-          <div>
-            <p class="brand-name">
-              LightBuild AI
-            </p>
-            <p class="brand-subtitle">
-              Chat Workspace
-            </p>
-          </div>
         </div>
 
         <button
@@ -392,7 +384,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
             :class="`message-row--${message.role}`"
           >
             <div class="message-avatar">
-              {{ message.role === 'assistant' ? 'AI' : '你' }}
+              {{ message.role === 'assistant' ? 'LB' : '你' }}
             </div>
             <div class="message-bubble">
               <template v-for="(block, blockIndex) in parseMessageBlocks(message.content)" :key="`${message.id}-${blockIndex}`">
@@ -430,7 +422,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 
           <div v-if="isLoading" class="message-row message-row--assistant">
             <div class="message-avatar">
-              AI
+              LB
             </div>
             <div class="message-bubble message-bubble--loading">
               <span class="typing-dot" />
@@ -552,7 +544,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 .composer-tip,
 .composer-error,
 .welcome-description {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.7;
 }
 
@@ -602,7 +594,8 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   background: #111827;
   color: #f9fafb;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 500;
+  letter-spacing: 1px;
 }
 
 .new-chat-button:hover,
@@ -657,7 +650,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   margin: 14px 0 0;
   color: #111827;
   font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
-  font-size: clamp(34px, 5vw, 52px);
+  font-size: clamp(34px, 5vw, 28px);
   line-height: 1.08;
   letter-spacing: -0.03em;
 }
@@ -700,7 +693,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 }
 
 .message-bubble {
-  padding: 16px 18px;
+  padding: 12px 16px;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.84);
@@ -958,7 +951,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   }
 
   .welcome-title {
-    font-size: 34px;
+    font-size: 24px;
   }
 
   .composer-card {

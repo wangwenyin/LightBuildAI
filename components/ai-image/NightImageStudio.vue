@@ -216,14 +216,6 @@ async function handleRetry() {
           <div class="brand-mark">
             LB
           </div>
-          <div>
-            <p class="brand-name">
-              LightBuild AI
-            </p>
-            <p class="brand-subtitle">
-              Image Workspace
-            </p>
-          </div>
         </div>
 
         <button
@@ -323,11 +315,7 @@ async function handleRetry() {
           </label>
         </div>
 
-        <div class="stage-footer">
-          <p class="stage-note">
-            支持 JPG、PNG；建议使用清晰原图，避免严重逆光或主体过小。
-          </p>
-
+        <div class="stage-footer" v-if="false">
           <div v-if="taskStatus" class="status-pill" :class="`status-pill--${statusVariant}`">
             {{ taskStatus }}
           </div>
@@ -339,22 +327,16 @@ async function handleRetry() {
           <p class="section-label">
             Prompt Composer
           </p>
-          <h2 class="prompt-title">
-            上传图片，然后描述你想要的夜景气质。
-          </h2>
         </div>
 
         <textarea
           v-model="customPrompt"
           class="prompt-textarea"
-          placeholder="例如：整体更像高端商业街夜景，门头灯光克制而有层次，橱窗暖光通透，路面反射细腻，避免廉价霓虹感。"
-          rows="5"
+          placeholder="请描述你想要的夜景气质..."
+          rows="2"
         />
 
         <div class="prompt-actions">
-          <label class="ghost-button" for="source-file-input">
-            {{ hasSourceImage ? '更换图片' : '上传参考图' }}
-          </label>
           <button
             class="primary-button"
             type="button"
@@ -362,14 +344,6 @@ async function handleRetry() {
             @click="handleGenerate"
           >
             {{ primaryActionLabel }}
-          </button>
-          <button
-            class="ghost-button"
-            type="button"
-            :disabled="!canRetry || isLoading"
-            @click="handleRetry"
-          >
-            重新生成
           </button>
         </div>
 
@@ -497,7 +471,8 @@ async function handleRetry() {
   background: #111827;
   color: #f9fafb;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 500;
+  letter-spacing: 1px;
 }
 
 .image-main {
@@ -505,7 +480,7 @@ async function handleRetry() {
   flex-direction: column;
   gap: 24px;
   min-width: 0;
-  padding: 24px;
+  padding: 16px;
 }
 
 .studio-stage-card,
@@ -529,20 +504,11 @@ async function handleRetry() {
   text-transform: uppercase;
 }
 
-.prompt-title,
 .stage-title {
   margin: 0;
   color: #111827;
   font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
   letter-spacing: -0.02em;
-}
-
-.stage-note {
-  margin: 16px 0 0;
-  max-width: 720px;
-  color: #4b5563;
-  font-size: 15px;
-  line-height: 1.9;
 }
 
 .stage-header,
@@ -565,7 +531,7 @@ async function handleRetry() {
 }
 
 .stage-title {
-  font-size: clamp(24px, 3vw, 34px);
+  font-size: clamp(24px, 3vw, 28px);
   line-height: 1.15;
 }
 
@@ -573,7 +539,6 @@ async function handleRetry() {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 720px;
   margin-top: 24px;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 28px;
@@ -695,7 +660,6 @@ async function handleRetry() {
 
 .prompt-textarea {
   width: 100%;
-  min-height: 108px;
   margin-top: 18px;
   padding: 2px 2px 12px;
   border: none;
@@ -727,8 +691,8 @@ async function handleRetry() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 48px;
-  padding: 0 22px;
+  min-height: 42px;
+  padding: 0 32px;
   border-radius: 999px;
   background: #111827;
   color: #f9fafb;
@@ -743,7 +707,7 @@ async function handleRetry() {
 }
 
 .prompt-actions {
-  justify-content: space-between;
+  justify-content: center;
   margin-top: 6px;
   padding-top: 14px;
   border-top: 1px solid rgba(17, 24, 39, 0.08);
@@ -778,10 +742,6 @@ async function handleRetry() {
   .stage-footer {
     flex-direction: column;
     align-items: flex-start;
-  }
-
-  .image-stage {
-    min-height: 480px;
   }
 
   .prompt-actions {

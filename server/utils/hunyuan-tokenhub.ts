@@ -143,6 +143,10 @@ export async function queryTokenHubImageJob(taskId: string, tokenHubApiKey?: str
 }
 
 async function createTokenHubImageInput(originalUrl: string, publicOrigin?: string) {
+  if (isImageDataUrl(originalUrl)) {
+    return originalUrl
+  }
+
   if (isHttpUrl(originalUrl)) {
     return originalUrl
   }
@@ -244,6 +248,10 @@ function isHttpUrl(value: string) {
   } catch {
     return false
   }
+}
+
+function isImageDataUrl(value: string) {
+  return /^data:image\/(?:png|jpe?g|webp);base64,/i.test(value)
 }
 
 function isPrivateOrigin(value: string) {

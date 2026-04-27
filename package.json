@@ -13,7 +13,6 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
-    "ali-oss": "^6.23.0",
     "axios": "^1.14.0",
     "bullmq": "^5.73.0",
     "crypto": "^1.0.1",

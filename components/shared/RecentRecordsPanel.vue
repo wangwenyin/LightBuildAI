@@ -53,7 +53,18 @@ function handleClear(event: MouseEvent) {
     <div class="recent-header">
       <button class="recent-header-trigger" type="button" @click="toggleExpanded">
         <span class="recent-title">{{ title }}</span>
-        <span class="recent-arrow" :class="{ 'recent-arrow--expanded': isExpanded }">⌃</span>
+        <span class="recent-arrow" :class="{ 'recent-arrow--expanded': isExpanded }" aria-hidden="true">
+          <svg viewBox="0 0 16 16">
+            <path
+              d="M3.5 6.25 8 10.75l4.5-4.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.7"
+            />
+          </svg>
+        </span>
       </button>
 
       <button
@@ -86,7 +97,16 @@ function handleClear(event: MouseEvent) {
           aria-label="删除记录"
           @click="handleDelete($event, item.id)"
         >
-          ×
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M5.25 5.25 10.75 10.75M10.75 5.25l-5.5 5.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.5"
+            />
+          </svg>
         </button>
       </div>
 
@@ -101,7 +121,8 @@ function handleClear(event: MouseEvent) {
 .recent-panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  min-height: 0;
 }
 
 .recent-header {
@@ -109,6 +130,8 @@ function handleClear(event: MouseEvent) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.06);
 }
 
 .recent-header-trigger {
@@ -122,23 +145,35 @@ function handleClear(event: MouseEvent) {
   color: #6b7280;
   font: inherit;
   cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.recent-header-trigger:hover {
+  color: #374151;
 }
 
 .recent-clear {
   flex-shrink: 0;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: #9ca3af;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #6b7280;
   font: inherit;
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
-  transition: color 0.2s ease;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .recent-clear:hover {
-  color: #4b5563;
+  border-color: rgba(17, 24, 39, 0.14);
+  background: rgba(255, 255, 255, 0.86);
+  color: #111827;
 }
 
 .recent-title {
@@ -149,8 +184,13 @@ function handleClear(event: MouseEvent) {
 }
 
 .recent-arrow {
-  font-size: 12px;
-  transform: rotate(180deg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: #9ca3af;
+  transform: rotate(-90deg);
   transition: transform 0.2s ease;
 }
 
@@ -158,11 +198,16 @@ function handleClear(event: MouseEvent) {
   transform: rotate(0deg);
 }
 
+.recent-arrow svg {
+  width: 14px;
+  height: 14px;
+}
+
 .recent-list {
   display: flex;
   max-height: 320px;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
   overflow: auto;
   scrollbar-width: none;
 }
@@ -174,31 +219,52 @@ function handleClear(event: MouseEvent) {
 .recent-item {
   position: relative;
   display: flex;
-  align-items: flex-start;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.72);
-  transition: background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  align-items: center;
+  min-height: 56px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.06);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.recent-item::before {
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+  content: '';
+  transition: background-color 0.2s ease;
 }
 
 .recent-item:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 12px 22px rgba(15, 23, 42, 0.06);
+  background: rgba(255, 255, 255, 0.52);
 }
 
 .recent-item--active {
-  background: rgba(209, 138, 17, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(209, 138, 17, 0.12);
+  border-color: rgba(191, 128, 24, 0.18);
+  background:
+    linear-gradient(90deg, rgba(191, 128, 24, 0.12), rgba(191, 128, 24, 0.02) 55%),
+    rgba(255, 255, 255, 0.5);
+}
+
+.recent-item--active::before {
+  background: linear-gradient(180deg, #f59e0b, #b45309);
 }
 
 .recent-item-main {
-  display: flex;
+  display: grid;
   width: 100%;
   flex: 1;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "title subtitle"
+    ". meta";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  padding: 10px 40px 10px 12px;
   border: none;
   background: transparent;
   color: #111827;
@@ -209,23 +275,25 @@ function handleClear(event: MouseEvent) {
 
 .recent-item-delete {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: 50%;
+  right: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
   border-radius: 999px;
   background: rgba(17, 24, 39, 0.05);
   color: #9ca3af;
-  font-size: 16px;
-  line-height: 1;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+  transform: translateY(-50%);
+  transition:
+    opacity 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 .recent-item:hover .recent-item-delete,
@@ -238,23 +306,56 @@ function handleClear(event: MouseEvent) {
   color: #4b5563;
 }
 
-.recent-item-title {
-  padding-right: 20px;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.5;
+.recent-item-delete svg {
+  width: 14px;
+  height: 14px;
 }
 
-.recent-item-subtitle,
+.recent-item-title {
+  grid-area: title;
+  flex: 0 0 auto;
+  max-width: 84px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recent-item-subtitle {
+  grid-area: subtitle;
+  flex: 1;
+  min-width: 0;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.92;
+}
+
 .recent-item-meta,
 .recent-empty {
   color: #6b7280;
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.5;
+}
+
+.recent-item-meta {
+  grid-area: meta;
+  justify-self: start;
+  color: #9ca3af;
+  font-size: 11px;
+  line-height: 1.4;
+  opacity: 0.88;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .recent-empty {
   margin: 0;
-  padding: 10px 2px 0;
+  padding: 14px 2px 0;
 }
 </style>

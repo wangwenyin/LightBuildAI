@@ -33,10 +33,16 @@ const messages = ref<ChatMessage[]>([])
 const messageListRef = useTemplateRef<HTMLDivElement>('messageListRef')
 const activeSessionId = shallowRef('')
 const isSidebarExpanded = shallowRef(true)
+const isChatStreamOverflowing = shallowRef(false)
+let chatStreamResizeObserver: ResizeObserver | null = null
+let chatStreamMutationObserver: MutationObserver | null = null
 const { clearSessions, deleteSession, getLatestSession, getSession, loadSessions, saveSession, sessions } = useLocalChatHistory()
 
 const canSend = computed(() => Boolean(inputMessage.value.trim()) && !isLoading.value)
 const hasConversation = computed(() => messages.value.length > 0)
+const chatStreamClasses = computed(() => ({
+  'chat-stream--scrollable': isChatStreamOverflowing.value,
+}))
 const recentSessions = computed(() => sessions.value.map(session => ({
   id: session.id,
   title: session.title,
@@ -54,7 +60,11 @@ watch(
       return
     }
 
-    container.scrollTop = container.scrollHeight
+    updateChatStreamOverflow()
+
+    if (isChatStreamOverflowing.value) {
+      container.scrollTop = container.scrollHeight
+    }
   },
 )
 
@@ -69,6 +79,17 @@ onMounted(() => {
   }
 
   activeSessionId.value = createSessionId()
+
+  nextTick(() => {
+    setupChatStreamObservers()
+    updateChatStreamOverflow()
+  })
+})
+
+onBeforeUnmount(() => {
+  chatStreamResizeObserver?.disconnect()
+  chatStreamMutationObserver?.disconnect()
+  window.removeEventListener('resize', scheduleChatStreamMeasure)
 })
 
 function clearConversation() {
@@ -77,6 +98,7 @@ function clearConversation() {
   currentRequestId.value = ''
   currentModel.value = ''
   errorMessage.value = ''
+  scheduleChatStreamMeasure()
 }
 
 function toggleSidebar() {
@@ -177,6 +199,49 @@ function openSession(sessionId: string) {
   activeSessionId.value = session.id
   messages.value = session.messages.map(message => ({ ...message }))
   errorMessage.value = ''
+  nextTick(() => {
+    setupChatStreamObservers()
+    updateChatStreamOverflow()
+  })
+}
+
+function setupChatStreamObservers() {
+  const container = messageListRef.value
+
+  if (!container) {
+    return
+  }
+
+  chatStreamResizeObserver?.disconnect()
+  chatStreamMutationObserver?.disconnect()
+
+  chatStreamResizeObserver = new ResizeObserver(scheduleChatStreamMeasure)
+  chatStreamResizeObserver.observe(container)
+
+  chatStreamMutationObserver = new MutationObserver(scheduleChatStreamMeasure)
+  chatStreamMutationObserver.observe(container, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  })
+
+  window.removeEventListener('resize', scheduleChatStreamMeasure)
+  window.addEventListener('resize', scheduleChatStreamMeasure)
+}
+
+function scheduleChatStreamMeasure() {
+  window.requestAnimationFrame(updateChatStreamOverflow)
+}
+
+function updateChatStreamOverflow() {
+  const container = messageListRef.value
+
+  if (!container) {
+    isChatStreamOverflowing.value = false
+    return
+  }
+
+  isChatStreamOverflowing.value = container.scrollHeight - container.clientHeight > 1
 }
 
 function formatRelativeTime(value: string) {
@@ -300,9 +365,14 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   <section class="chat-layout" :class="{ 'chat-layout--collapsed': !isSidebarExpanded }">
     <aside class="chat-sidebar">
       <div class="sidebar-top">
-        <div v-if="isSidebarExpanded" class="sidebar-brand">
+        <div class="sidebar-brand" :class="{ 'sidebar-brand--collapsed': !isSidebarExpanded }">
           <div class="brand-mark">
             LB
+          </div>
+
+          <div v-if="isSidebarExpanded" class="brand-copy">
+            <p class="brand-name">LightBuild</p>
+            <p class="brand-subtitle">Chat Studio</p>
           </div>
         </div>
 
@@ -315,7 +385,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path
-              d="M4.75 5.75A1.5 1.5 0 0 1 6.25 4.25h11.5a1.5 1.5 0 0 1 1.5 1.5v12.5a1.5 1.5 0 0 1-1.5 1.5H6.25a1.5 1.5 0 0 1-1.5-1.5zm2 .5v11.5h10.5V6.25zm2.5 0v11.5"
+              d="M5.75 6.75h12.5M5.75 12h12.5M5.75 17.25h12.5M8.75 4.75 5.25 8l3.5 3.25"
               fill="none"
               stroke="currentColor"
               stroke-linecap="round"
@@ -363,7 +433,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
     </aside>
 
     <main class="chat-main">
-      <div ref="messageListRef" class="chat-stream">
+      <div ref="messageListRef" class="chat-stream" :class="chatStreamClasses">
         <div v-if="!hasConversation" class="chat-welcome">
           <p class="welcome-kicker">
             LIGHTBUILD CONVERSATION
@@ -471,10 +541,11 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 .chat-layout {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
-  min-height: calc(100vh - 210px);
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 32px;
+  border-radius: 16px;
   background: rgba(250, 250, 249, 0.72);
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(18px);
@@ -484,7 +555,21 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   grid-template-columns: 88px minmax(0, 1fr);
 }
 
+.chat-layout--collapsed .chat-sidebar {
+  align-items: center;
+  padding-inline: 14px;
+}
+
+.chat-layout--collapsed .sidebar-top {
+  width: 100%;
+  justify-content: center;
+  .sidebar-brand {
+    display: none;
+  }
+}
+
 .chat-sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -506,6 +591,11 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   gap: 12px;
 }
 
+.sidebar-brand--collapsed {
+  width: 100%;
+  justify-content: center;
+}
+
 .brand-mark {
   display: inline-flex;
   align-items: center;
@@ -513,10 +603,29 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   width: 42px;
   height: 42px;
   border-radius: 14px;
-  background: #111827;
-  color: #f9fafb;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(245, 158, 11, 0.92), rgba(180, 83, 9, 0.96) 70%),
+    #111827;
+  color: #fff7ed;
   font-size: 14px;
   font-weight: 700;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 12px 28px rgba(180, 83, 9, 0.2);
+  transition: transform 0.24s ease, box-shadow 0.24s ease;
+}
+
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-brand:hover .brand-mark {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 16px 36px rgba(180, 83, 9, 0.24);
 }
 
 .brand-name {
@@ -571,8 +680,10 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   height: 38px;
   flex-shrink: 0;
   border-radius: 12px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
   background: rgba(255, 255, 255, 0.72);
-  color: #4b5563;
+  color: #374151;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
 }
 
 .sidebar-toggle svg,
@@ -590,6 +701,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   align-items: center;
   justify-content: center;
   min-height: 46px;
+  padding: 0 20px;
   border-radius: 16px;
   background: #111827;
   color: #f9fafb;
@@ -619,7 +731,9 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 .chat-main {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
+  overflow: hidden;
   background:
     radial-gradient(circle at top, rgba(255, 255, 255, 0.88), transparent 40%),
     rgba(250, 250, 249, 0.9);
@@ -627,8 +741,16 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 
 .chat-stream {
   flex: 1;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   padding: 40px 24px 20px;
+}
+
+.chat-stream--scrollable {
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .chat-welcome,
@@ -640,10 +762,11 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 
 .chat-welcome {
   display: flex;
-  min-height: 100%;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   justify-content: center;
-  padding: 32px 0 64px;
+  padding: 32px 0;
 }
 
 .welcome-title {
@@ -841,8 +964,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 }
 
 .composer-shell {
-  position: sticky;
-  bottom: 0;
+  flex-shrink: 0;
   padding: 0 24px 24px;
   background: linear-gradient(180deg, rgba(250, 250, 249, 0), rgba(250, 250, 249, 0.96) 32%);
 }
@@ -931,7 +1053,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 @media (max-width: 640px) {
   .chat-layout {
     min-height: auto;
-    border-radius: 24px;
+    border-radius: 8px;
   }
 
   .chat-sidebar,

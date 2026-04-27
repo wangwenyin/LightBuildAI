@@ -6,6 +6,15 @@ type WorkspaceTab = 'image' | 'chat'
 
 const activeTab = shallowRef<WorkspaceTab>('image')
 
+useHead(() => ({
+  htmlAttrs: {
+    class: activeTab.value === 'chat' ? 'app-mode-chat' : 'app-mode-image',
+  },
+  bodyAttrs: {
+    class: activeTab.value === 'chat' ? 'app-mode-chat' : 'app-mode-image',
+  },
+}))
+
 const tabs: Array<{
   key: WorkspaceTab
   label: string
@@ -25,8 +34,8 @@ const tabs: Array<{
 </script>
 
 <template>
-  <div class="workspace-page">
-    <div class="workspace-shell">
+  <div class="workspace-page" :class="`workspace-page--${activeTab}`">
+    <div class="workspace-shell" :class="`workspace-shell--${activeTab}`">
       <header class="workspace-topbar">
         <div class="workspace-title-block">
           <p class="workspace-kicker">
@@ -57,7 +66,7 @@ const tabs: Array<{
         </div>
       </header>
 
-      <div class="workspace-content">
+      <div class="workspace-content" :class="`workspace-content--${activeTab}`">
         <NightImageStudio v-if="activeTab === 'image'" />
         <TokenHubChatPanel v-else />
       </div>
@@ -67,7 +76,9 @@ const tabs: Array<{
 
 <style scoped>
 .workspace-page {
+  box-sizing: border-box;
   min-height: 100vh;
+  min-height: 100dvh;
   padding: 16px;
   background:
     radial-gradient(circle at top left, rgba(245, 158, 11, 0.12), transparent 28%),
@@ -78,6 +89,22 @@ const tabs: Array<{
 .workspace-shell {
   max-width: 1480px;
   margin: 0 auto;
+  width: 100%;
+}
+
+.workspace-page--chat {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.workspace-shell--chat {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
 }
 
 .workspace-topbar {
@@ -185,11 +212,24 @@ const tabs: Array<{
 }
 
 .workspace-content {
-  min-height: calc(100vh - 210px);
+  min-height: 0;
+}
+
+.workspace-content--chat {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.workspace-content--chat > * {
+  min-height: 0;
+  flex: 1;
 }
 
 @media (max-width: 960px) {
   .workspace-page {
+    box-sizing: border-box;
     padding: 20px;
   }
 
@@ -210,6 +250,7 @@ const tabs: Array<{
 
 @media (max-width: 640px) {
   .workspace-page {
+    box-sizing: border-box;
     padding: 16px;
   }
 

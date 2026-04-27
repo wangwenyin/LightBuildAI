@@ -2,6 +2,9 @@
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
+  experimental: {
+    appManifest: false,
+  },
   appDir: 'app',
   runtimeConfig: {
     tencentcloudSecretId: process.env.TENCENTCLOUD_SECRET_ID,

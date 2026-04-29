@@ -3,6 +3,16 @@ import AppSidebarShell from '~/components/shared/AppSidebarShell.vue'
 import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
 import { useLocalChatHistory, type LocalChatMessage } from '~/composables/useLocalChatHistory'
 
+const props = withDefaults(defineProps<{
+  mobileSidebarOpen?: boolean
+}>(), {
+  mobileSidebarOpen: false,
+})
+
+const emit = defineEmits<{
+  'update:mobileSidebarOpen': [value: boolean]
+}>()
+
 type ChatRole = 'user' | 'assistant'
 
 type ChatMessage = {
@@ -34,9 +44,11 @@ const messages = ref<ChatMessage[]>([])
 const messageListRef = useTemplateRef<HTMLDivElement>('messageListRef')
 const activeSessionId = shallowRef('')
 const isSidebarExpanded = shallowRef(true)
+const isMobileViewport = shallowRef(false)
 const isChatStreamOverflowing = shallowRef(false)
 let chatStreamResizeObserver: ResizeObserver | null = null
 let chatStreamMutationObserver: MutationObserver | null = null
+let mobileViewportQuery: MediaQueryList | null = null
 const { clearSessions, deleteSession, getLatestSession, getSession, loadSessions, saveSession, sessions } = useLocalChatHistory()
 
 const canSend = computed(() => Boolean(inputMessage.value.trim()) && !isLoading.value)
@@ -50,6 +62,10 @@ const recentSessions = computed(() => sessions.value.map(session => ({
   subtitle: session.preview,
   meta: formatRelativeTime(session.updatedAt),
 })))
+const isMobileSidebarOpen = computed({
+  get: () => props.mobileSidebarOpen,
+  set: value => emit('update:mobileSidebarOpen', value),
+})
 
 watch(
   () => [messages.value.length, isLoading.value],
@@ -70,6 +86,7 @@ watch(
 )
 
 onMounted(() => {
+  setupMobileViewportWatcher()
   loadSessions()
 
   const latestSession = getLatestSession()
@@ -91,6 +108,7 @@ onBeforeUnmount(() => {
   chatStreamResizeObserver?.disconnect()
   chatStreamMutationObserver?.disconnect()
   window.removeEventListener('resize', scheduleChatStreamMeasure)
+  mobileViewportQuery?.removeEventListener('change', handleMobileViewportChange)
 })
 
 function clearConversation() {
@@ -100,10 +118,20 @@ function clearConversation() {
   currentModel.value = ''
   errorMessage.value = ''
   scheduleChatStreamMeasure()
+  closeMobileSidebar()
 }
 
 function toggleSidebar() {
+  if (isMobileViewport.value) {
+    isMobileSidebarOpen.value = !isMobileSidebarOpen.value
+    return
+  }
+
   isSidebarExpanded.value = !isSidebarExpanded.value
+}
+
+function closeMobileSidebar() {
+  isMobileSidebarOpen.value = false
 }
 
 function handleDeleteSession(sessionId: string) {
@@ -200,10 +228,26 @@ function openSession(sessionId: string) {
   activeSessionId.value = session.id
   messages.value = session.messages.map(message => ({ ...message }))
   errorMessage.value = ''
+  closeMobileSidebar()
   nextTick(() => {
     setupChatStreamObservers()
     updateChatStreamOverflow()
   })
+}
+
+function setupMobileViewportWatcher() {
+  mobileViewportQuery = window.matchMedia('(max-width: 1080px)')
+  isMobileViewport.value = mobileViewportQuery.matches
+  isMobileSidebarOpen.value = false
+  mobileViewportQuery.addEventListener('change', handleMobileViewportChange)
+}
+
+function handleMobileViewportChange(event: MediaQueryListEvent) {
+  isMobileViewport.value = event.matches
+
+  if (!event.matches) {
+    isMobileSidebarOpen.value = false
+  }
 }
 
 function setupChatStreamObservers() {
@@ -367,23 +411,14 @@ function parseMessageBlocks(content: string): MessageBlock[] {
     <AppSidebarShell
       class="chat-sidebar"
       :expanded="isSidebarExpanded"
+      :mobile-open="isMobileSidebarOpen"
       subtitle="Chat Studio"
       action-label="新建聊天"
+      collapsed-action-label="+"
       @toggle="toggleSidebar"
       @action="clearConversation"
+      @close-mobile="closeMobileSidebar"
     >
-      <template #action-icon>
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            d="M12 5v14M5 12h14"
-            fill="none"
-            stroke="currentColor"
-            stroke-linecap="round"
-            stroke-width="1.8"
-          />
-        </svg>
-      </template>
-
       <RecentRecordsPanel
         title="最近"
         :items="recentSessions"
@@ -513,6 +548,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 
 <style scoped>
 .chat-layout {
+  position: relative;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   height: 100%;
@@ -868,6 +904,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 @media (max-width: 1080px) {
   .chat-layout {
     grid-template-columns: 1fr;
+    overflow: visible;
   }
 
   .chat-layout--collapsed {
@@ -876,8 +913,9 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 
   .chat-sidebar {
     border-right: none;
-    border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+    border-bottom: none;
   }
+
 }
 
 @media (max-width: 640px) {

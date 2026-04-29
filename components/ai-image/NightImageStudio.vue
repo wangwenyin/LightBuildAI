@@ -3,6 +3,16 @@ import AppSidebarShell from '~/components/shared/AppSidebarShell.vue'
 import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
 import { useLocalImageHistory } from '~/composables/useLocalImageHistory'
 
+const props = withDefaults(defineProps<{
+  mobileSidebarOpen?: boolean
+}>(), {
+  mobileSidebarOpen: false,
+})
+
+const emit = defineEmits<{
+  'update:mobileSidebarOpen': [value: boolean]
+}>()
+
 const {
   activeView,
   customPrompt,
@@ -36,10 +46,16 @@ const {
 } = useLocalImageHistory()
 
 const isSidebarExpanded = shallowRef(true)
+const isMobileViewport = shallowRef(false)
 const activeHistoryId = shallowRef('')
 const draftHistoryId = shallowRef('')
 const shouldAnimateResultReveal = shallowRef(false)
 let resultRevealTimer: ReturnType<typeof window.setTimeout> | null = null
+let mobileViewportQuery: MediaQueryList | null = null
+const isMobileSidebarOpen = computed({
+  get: () => props.mobileSidebarOpen,
+  set: value => emit('update:mobileSidebarOpen', value),
+})
 
 const stageTitle = computed(() => {
   if (hasResultImage.value && activeView.value === 'result') {
@@ -78,6 +94,7 @@ const imageWrapperClasses = computed(() => ({
 }))
 
 onMounted(() => {
+  setupMobileViewportWatcher()
   loadRecords()
 
   const latestRecord = getLatestRecord()
@@ -135,6 +152,8 @@ watch(resultUrl, (nextValue, previousValue) => {
 })
 
 onBeforeUnmount(() => {
+  mobileViewportQuery?.removeEventListener('change', handleMobileViewportChange)
+
   if (!resultRevealTimer) {
     return
   }
@@ -143,7 +162,16 @@ onBeforeUnmount(() => {
 })
 
 function toggleSidebar() {
+  if (isMobileViewport.value) {
+    isMobileSidebarOpen.value = !isMobileSidebarOpen.value
+    return
+  }
+
   isSidebarExpanded.value = !isSidebarExpanded.value
+}
+
+function closeMobileSidebar() {
+  isMobileSidebarOpen.value = false
 }
 
 function createHistoryId() {
@@ -181,12 +209,14 @@ function openHistory(recordId: string) {
     status: record.status,
     taskId: record.taskId,
   })
+  closeMobileSidebar()
 }
 
 function handleNewTask() {
   activeHistoryId.value = ''
   draftHistoryId.value = createHistoryId()
   resetGenerator()
+  closeMobileSidebar()
 }
 
 function handleDeleteRecord(recordId: string) {
@@ -209,6 +239,21 @@ function handleDeleteRecord(recordId: string) {
 function handleClearRecords() {
   clearRecords()
   handleNewTask()
+}
+
+function setupMobileViewportWatcher() {
+  mobileViewportQuery = window.matchMedia('(max-width: 1080px)')
+  isMobileViewport.value = mobileViewportQuery.matches
+  isMobileSidebarOpen.value = false
+  mobileViewportQuery.addEventListener('change', handleMobileViewportChange)
+}
+
+function handleMobileViewportChange(event: MediaQueryListEvent) {
+  isMobileViewport.value = event.matches
+
+  if (!event.matches) {
+    isMobileSidebarOpen.value = false
+  }
 }
 
 function handleFileSelect(event: Event) {
@@ -249,11 +294,13 @@ async function handleRetry() {
     <AppSidebarShell
       class="image-sidebar"
       :expanded="isSidebarExpanded"
+      :mobile-open="isMobileSidebarOpen"
       subtitle="Night Studio"
       action-label="新建任务"
       collapsed-action-label="+"
       @toggle="toggleSidebar"
       @action="handleNewTask"
+      @close-mobile="closeMobileSidebar"
     >
       <RecentRecordsPanel
         title="最近"
@@ -392,6 +439,7 @@ async function handleRetry() {
 
 <style scoped>
 .image-layout {
+  position: relative;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   min-height: calc(100vh - 210px);
@@ -888,12 +936,14 @@ async function handleRetry() {
 @media (max-width: 1080px) {
   .image-layout {
     grid-template-columns: 1fr;
+    overflow: visible;
   }
 
   .image-sidebar {
     border-right: none;
-    border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+    border-bottom: none;
   }
+
 }
 
 @media (max-width: 960px) {

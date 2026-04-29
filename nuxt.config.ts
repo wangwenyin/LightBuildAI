@@ -2,6 +2,7 @@
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
+  css: ['~/app/assets/styles/reset.css'],
   ssr: true, // Nuxt3 默认开启 SSR，保持开启
   nitro: {
     preset: 'vercel', // 显式指定 Vercel 预设，避免自动检测异常

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppSidebarShell from '~/components/shared/AppSidebarShell.vue'
 import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
 import { useLocalChatHistory, type LocalChatMessage } from '~/composables/useLocalChatHistory'
 
@@ -363,41 +364,16 @@ function parseMessageBlocks(content: string): MessageBlock[] {
 
 <template>
   <section class="chat-layout" :class="{ 'chat-layout--collapsed': !isSidebarExpanded }">
-    <aside class="chat-sidebar">
-      <div class="sidebar-top">
-        <div class="sidebar-brand" :class="{ 'sidebar-brand--collapsed': !isSidebarExpanded }">
-          <div class="brand-mark">
-            LB
-          </div>
-
-          <div v-if="isSidebarExpanded" class="brand-copy">
-            <p class="brand-name">LightBuild</p>
-            <p class="brand-subtitle">Chat Studio</p>
-          </div>
-        </div>
-
-        <button
-          class="sidebar-toggle"
-          :class="{ 'sidebar-toggle--collapsed': !isSidebarExpanded }"
-          type="button"
-          :aria-label="isSidebarExpanded ? '收起侧边栏' : '展开侧边栏'"
-          @click="toggleSidebar"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M5.75 6.75h12.5M5.75 12h12.5M5.75 17.25h12.5M8.75 4.75 5.25 8l3.5 3.25"
-              fill="none"
-              stroke="currentColor"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1.6"
-            />
-          </svg>
-        </button>
-      </div>
-
-      <button class="new-chat-button" type="button" @click="clearConversation">
-        <svg v-if="!isSidebarExpanded" viewBox="0 0 24 24" aria-hidden="true">
+    <AppSidebarShell
+      class="chat-sidebar"
+      :expanded="isSidebarExpanded"
+      subtitle="Chat Studio"
+      action-label="新建聊天"
+      @toggle="toggleSidebar"
+      @action="clearConversation"
+    >
+      <template #action-icon>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
           <path
             d="M12 5v14M5 12h14"
             fill="none"
@@ -406,11 +382,9 @@ function parseMessageBlocks(content: string): MessageBlock[] {
             stroke-width="1.8"
           />
         </svg>
-        <span v-else>新建聊天</span>
-      </button>
+      </template>
 
       <RecentRecordsPanel
-        v-if="isSidebarExpanded"
         title="最近"
         :items="recentSessions"
         :active-id="activeSessionId"
@@ -422,15 +396,15 @@ function parseMessageBlocks(content: string): MessageBlock[] {
         @clear="handleClearSessions"
       />
 
-      <div v-if="isSidebarExpanded" class="sidebar-footer">
+      <template #footer>
         <p class="sidebar-meta">
           {{ currentModel || 'TokenHub Chat' }}
         </p>
         <p v-if="currentRequestId" class="sidebar-request">
           Request ID: {{ currentRequestId }}
         </p>
-      </div>
-    </aside>
+      </template>
+    </AppSidebarShell>
 
     <main class="chat-main">
       <div ref="messageListRef" class="chat-stream" :class="chatStreamClasses">
@@ -523,7 +497,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
             </p>
 
             <button
-              class="send-button"
+              class="send-button ui-button-reset ui-interactive-lift ui-disabled"
               type="button"
               :disabled="!canSend"
               @click="sendMessage"
@@ -549,94 +523,21 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   background: rgba(250, 250, 249, 0.72);
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(18px);
+  transition:
+    grid-template-columns 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.28s ease,
+    box-shadow 0.28s ease;
 }
 
 .chat-layout--collapsed {
   grid-template-columns: 88px minmax(0, 1fr);
 }
 
-.chat-layout--collapsed .chat-sidebar {
-  align-items: center;
-  padding-inline: 14px;
-}
-
-.chat-layout--collapsed .sidebar-top {
-  width: 100%;
-  justify-content: center;
-  .sidebar-brand {
-    display: none;
-  }
-}
-
 .chat-sidebar {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding: 22px;
-  border-right: 1px solid rgba(17, 24, 39, 0.08);
   background: rgba(244, 244, 245, 0.92);
 }
 
-.sidebar-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.sidebar-brand--collapsed {
-  width: 100%;
-  justify-content: center;
-}
-
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  background:
-    radial-gradient(circle at 30% 30%, rgba(245, 158, 11, 0.92), rgba(180, 83, 9, 0.96) 70%),
-    #111827;
-  color: #fff7ed;
-  font-size: 14px;
-  font-weight: 700;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 12px 28px rgba(180, 83, 9, 0.2);
-  transition: transform 0.24s ease, box-shadow 0.24s ease;
-}
-
-.brand-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.sidebar-brand:hover .brand-mark {
-  transform: translateY(-1px) scale(1.02);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 16px 36px rgba(180, 83, 9, 0.24);
-}
-
-.brand-name {
-  margin: 0;
-  color: #111827;
-  font-size: 15px;
-  font-weight: 700;
-}
-
 .brand-subtitle,
-.sidebar-label,
 .sidebar-request,
 .sidebar-meta,
 .composer-tip,
@@ -657,77 +558,12 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   line-height: 1.7;
 }
 
-.sidebar-toggle,
-.new-chat-button,
-.sidebar-card,
-.sidebar-link,
-.send-button {
-  border: none;
-  font: inherit;
-  cursor: pointer;
-  transition:
-    transform 0.2s ease,
-    background-color 0.2s ease,
-    box-shadow 0.2s ease,
-    border-color 0.2s ease;
-}
-
-.sidebar-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  flex-shrink: 0;
-  border-radius: 12px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: rgba(255, 255, 255, 0.72);
-  color: #374151;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-}
-
-.sidebar-toggle svg,
-.new-chat-button svg {
-  width: 18px;
-  height: 18px;
-}
-
-.sidebar-toggle--collapsed svg {
-  transform: scaleX(-1);
-}
-
-.new-chat-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 46px;
-  padding: 0 20px;
-  border-radius: 16px;
-  background: #111827;
-  color: #f9fafb;
-  font-size: 14px;
-  font-weight: 500;
-  letter-spacing: 1px;
-}
-
-.new-chat-button:hover,
-.sidebar-toggle:hover,
-.send-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
-.sidebar-label,
 .welcome-kicker {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.22em;
   text-transform: uppercase;
 }
-.sidebar-footer {
-  margin-top: auto;
-  padding-top: 8px;
-}
-
 .chat-main {
   display: flex;
   min-width: 0;
@@ -1015,11 +851,6 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   font-weight: 700;
 }
 
-.send-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
 @keyframes pulse {
   0%,
   80%,
@@ -1047,7 +878,6 @@ function parseMessageBlocks(content: string): MessageBlock[] {
     border-right: none;
     border-bottom: 1px solid rgba(17, 24, 39, 0.08);
   }
-
 }
 
 @media (max-width: 640px) {
@@ -1061,11 +891,6 @@ function parseMessageBlocks(content: string): MessageBlock[] {
   .composer-shell {
     padding-left: 16px;
     padding-right: 16px;
-  }
-
-  .chat-sidebar {
-    padding-top: 16px;
-    padding-bottom: 16px;
   }
 
   .chat-stream {

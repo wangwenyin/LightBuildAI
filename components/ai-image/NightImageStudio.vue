@@ -1,10 +1,10 @@
 <script setup lang="ts">
+import AppSidebarShell from '~/components/shared/AppSidebarShell.vue'
 import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
 import { useLocalImageHistory } from '~/composables/useLocalImageHistory'
 
 const {
   activeView,
-  canRetry,
   customPrompt,
   currentTaskId,
   displayedImageUrl,
@@ -246,46 +246,16 @@ async function handleRetry() {
 
 <template>
   <section class="image-layout" :class="{ 'image-layout--collapsed': !isSidebarExpanded }">
-    <aside class="image-sidebar">
-      <div class="sidebar-top">
-        <div class="sidebar-brand" :class="{ 'sidebar-brand--collapsed': !isSidebarExpanded }">
-          <div class="brand-mark">
-            LB
-          </div>
-
-          <div v-if="isSidebarExpanded" class="brand-copy">
-            <p class="brand-name">LightBuild</p>
-            <p class="brand-subtitle">Night Studio</p>
-          </div>
-        </div>
-
-        <button
-          class="sidebar-toggle"
-          :class="{ 'sidebar-toggle--collapsed': !isSidebarExpanded }"
-          type="button"
-          :aria-label="isSidebarExpanded ? '收起侧边栏' : '展开侧边栏'"
-          @click="toggleSidebar"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M5.75 6.75h12.5M5.75 12h12.5M5.75 17.25h12.5M8.75 4.75 5.25 8l3.5 3.25"
-              fill="none"
-              stroke="currentColor"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1.6"
-            />
-          </svg>
-        </button>
-      </div>
-
-      <button class="new-task-button" type="button" @click="handleNewTask">
-        <span v-if="isSidebarExpanded">新建任务</span>
-        <span v-else>+</span>
-      </button>
-
+    <AppSidebarShell
+      class="image-sidebar"
+      :expanded="isSidebarExpanded"
+      subtitle="Night Studio"
+      action-label="新建任务"
+      collapsed-action-label="+"
+      @toggle="toggleSidebar"
+      @action="handleNewTask"
+    >
       <RecentRecordsPanel
-        v-if="isSidebarExpanded"
         title="最近"
         :items="recentRecords"
         :active-id="activeHistoryId"
@@ -296,7 +266,7 @@ async function handleRetry() {
         @delete="handleDeleteRecord"
         @clear="handleClearRecords"
       />
-    </aside>
+    </AppSidebarShell>
 
     <main class="image-main">
       <div class="studio-stage-card">
@@ -313,7 +283,7 @@ async function handleRetry() {
           <div class="stage-tools">
             <div v-if="hasSourceImage" class="view-switch" role="tablist" aria-label="切换预览">
               <button
-                class="view-switch-button"
+                class="view-switch-button ui-button-reset ui-interactive-lift ui-disabled"
                 :class="{ 'view-switch-button--active': activeView === 'source' }"
                 type="button"
                 @click="setActiveView('source')"
@@ -321,7 +291,7 @@ async function handleRetry() {
                 原图
               </button>
               <button
-                class="view-switch-button"
+                class="view-switch-button ui-button-reset ui-interactive-lift ui-disabled"
                 :class="{ 'view-switch-button--active': activeView === 'result' }"
                 type="button"
                 :disabled="!hasResultImage"
@@ -399,7 +369,7 @@ async function handleRetry() {
 
         <div class="prompt-actions">
           <button
-            class="primary-button"
+            class="primary-button ui-button-reset ui-interactive-lift ui-disabled"
             type="button"
             :disabled="isLoading"
             @click="handleGenerate"
@@ -436,154 +406,20 @@ async function handleRetry() {
     0 24px 80px rgba(15, 23, 42, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.6);
   backdrop-filter: blur(18px);
+  transition:
+    grid-template-columns 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.28s ease,
+    box-shadow 0.28s ease;
 }
 
 .image-layout--collapsed {
   grid-template-columns: 88px minmax(0, 1fr);
 }
 
-.image-layout--collapsed .image-sidebar {
-  align-items: center;
-  padding-inline: 14px;
-}
-
-.image-layout--collapsed .sidebar-top {
-  width: 100%;
-  justify-content: center;
-  .sidebar-brand {
-    display: none;
-  }
-}
-
 .image-sidebar {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 22px;
-  border-right: 1px solid rgba(17, 24, 39, 0.08);
   background:
     linear-gradient(180deg, rgba(248, 247, 244, 0.96), rgba(240, 238, 233, 0.92)),
     rgba(244, 244, 245, 0.92);
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.5);
-}
-
-.sidebar-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.sidebar-brand--collapsed {
-  width: 100%;
-  justify-content: center;
-}
-
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  background:
-    radial-gradient(circle at 30% 30%, rgba(245, 158, 11, 0.92), rgba(180, 83, 9, 0.96) 70%),
-    #111827;
-  color: #fff7ed;
-  font-size: 14px;
-  font-weight: 700;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 12px 28px rgba(180, 83, 9, 0.2);
-  transition: transform 0.24s ease, box-shadow 0.24s ease;
-}
-
-.brand-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.sidebar-brand:hover .brand-mark {
-  transform: translateY(-1px) scale(1.02);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 16px 36px rgba(180, 83, 9, 0.24);
-}
-
-.brand-name {
-  margin: 0;
-  color: #111827;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.brand-subtitle {
-  margin: 0;
-  color: #6b7280;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.sidebar-toggle,
-.new-task-button,
-.view-switch-button,
-.primary-button,
-.ghost-button {
-  border: none;
-  font: inherit;
-  cursor: pointer;
-  transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease,
-    color 0.2s ease,
-    border-color 0.2s ease;
-}
-
-.sidebar-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: rgba(255, 255, 255, 0.72);
-  color: #374151;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-}
-
-.sidebar-toggle svg,
-.new-task-button svg {
-  width: 18px;
-  height: 18px;
-}
-
-.sidebar-toggle--collapsed svg {
-  transform: scaleX(-1);
-}
-
-.new-task-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 46px;
-  padding: 0 20px;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #111827, #1f2937);
-  color: #f9fafb;
-  font-size: 14px;
-  font-weight: 500;
-  letter-spacing: 1px;
-  box-shadow: 0 18px 40px rgba(17, 24, 39, 0.14);
 }
 
 .image-main {
@@ -876,13 +712,6 @@ async function handleRetry() {
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
 }
 
-.view-switch-button:disabled,
-.primary-button:disabled,
-.ghost-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
 .prompt-textarea {
   width: 100%;
   margin-top: 18px;
@@ -906,12 +735,6 @@ async function handleRetry() {
   font-size: 14px;
 }
 
-.ghost-button:hover:not(:disabled),
-.sidebar-toggle:hover,
-.new-task-button:hover {
-  transform: translateY(-1px);
-}
-
 .primary-button {
   display: inline-flex;
   align-items: center;
@@ -924,11 +747,6 @@ async function handleRetry() {
   font-size: 14px;
   font-weight: 700;
   box-shadow: 0 14px 30px rgba(17, 24, 39, 0.16);
-}
-
-.ghost-button--dark {
-  background: rgba(17, 24, 39, 0.92);
-  color: #f9fafb;
 }
 
 .prompt-actions {
@@ -968,12 +786,6 @@ async function handleRetry() {
   background: rgba(8, 12, 22, 0.76);
   opacity: 1;
   box-shadow: 0 18px 36px rgba(0, 0, 0, 0.2);
-}
-
-.download-float-button__label {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
 }
 
 .download-float-button__icon {
@@ -1101,10 +913,6 @@ async function handleRetry() {
 
 @media (max-width: 640px) {
   .image-main {
-    padding: 16px;
-  }
-
-  .image-sidebar {
     padding: 16px;
   }
 

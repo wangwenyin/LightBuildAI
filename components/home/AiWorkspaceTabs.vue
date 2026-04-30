@@ -109,9 +109,14 @@ watch(activeTab, () => {
 <style scoped>
 .workspace-page {
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
   min-height: 100dvh;
   padding: 12px;
+  overflow: hidden;
   background:
     radial-gradient(circle at top left, rgba(245, 158, 11, 0.12), transparent 28%),
     radial-gradient(circle at top right, rgba(59, 130, 246, 0.08), transparent 24%),
@@ -119,24 +124,13 @@ watch(activeTab, () => {
 }
 
 .workspace-shell {
-  max-width: 1480px;
-  margin: 0 auto;
+  display: flex;
   width: 100%;
-}
-
-.workspace-page--chat {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
-  overflow: hidden;
-}
-
-.workspace-shell--chat {
-  display: flex;
   min-height: 0;
   flex: 1;
   flex-direction: column;
+  max-width: 1480px;
+  margin: 0 auto;
 }
 
 .workspace-topbar {
@@ -272,17 +266,17 @@ watch(activeTab, () => {
 
 .workspace-content {
   min-height: 0;
-}
-
-.workspace-content--chat {
-  display: flex;
-  min-height: 0;
   flex: 1;
+  display: flex;
   flex-direction: column;
 }
 
-.workspace-content--chat > * {
+.workspace-content > * {
   min-height: 0;
+  flex: 1;
+}
+
+.workspace-content--chat {
   flex: 1;
 }
 

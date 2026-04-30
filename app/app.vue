@@ -14,14 +14,10 @@ body,
 }
 
 html.app-mode-chat,
-body.app-mode-chat {
-  overflow: hidden;
-}
-
 html.app-mode-image,
+body.app-mode-chat,
 body.app-mode-image {
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .app-root {

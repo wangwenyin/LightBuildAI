@@ -316,123 +316,127 @@ async function handleRetry() {
     </AppSidebarShell>
 
     <main class="image-main">
-      <div class="studio-stage-card">
-        <div class="stage-header">
-          <div class="stage-title-group">
-            <p class="section-label">
-              Visual Stage
-            </p>
-            <h2 class="stage-title">
-              {{ stageTitle }}
-            </h2>
-          </div>
-
-          <div class="stage-tools">
-            <div v-if="hasSourceImage" class="view-switch" role="tablist" aria-label="切换预览">
-              <button
-                class="view-switch-button ui-button-reset ui-interactive-lift ui-disabled"
-                :class="{ 'view-switch-button--active': activeView === 'source' }"
-                type="button"
-                @click="setActiveView('source')"
-              >
-                原图
-              </button>
-              <button
-                class="view-switch-button ui-button-reset ui-interactive-lift ui-disabled"
-                :class="{ 'view-switch-button--active': activeView === 'result' }"
-                type="button"
-                :disabled="!hasResultImage"
-                @click="setActiveView('result')"
-              >
-                夜景
-              </button>
+      <div class="image-scroll-region">
+        <div class="studio-stage-card">
+          <div class="stage-header">
+            <div class="stage-title-group">
+              <p class="section-label">
+                Visual Stage
+              </p>
+              <h2 class="stage-title">
+                {{ stageTitle }}
+              </h2>
             </div>
-          </div>
-        </div>
 
-        <div class="image-stage" :class="stageFrameClasses">
-          <div v-if="displayedImageUrl" class="image-wrapper" :class="imageWrapperClasses">
-            <img :src="displayedImageUrl" :alt="stageTitle" class="stage-image">
-
-            <div v-if="isLoading && hasSourceImage" class="curtain-overlay" aria-hidden="true">
-              <div class="curtain-sweep" />
-              <div class="curtain-glow" />
-              <div class="curtain-caption">
-                {{ loadingText }}
+            <div class="stage-tools">
+              <div v-if="hasSourceImage" class="view-switch" role="tablist" aria-label="切换预览">
+                <button
+                  class="view-switch-button ui-button-reset ui-interactive-lift ui-disabled"
+                  :class="{ 'view-switch-button--active': activeView === 'source' }"
+                  type="button"
+                  @click="setActiveView('source')"
+                >
+                  原图
+                </button>
+                <button
+                  class="view-switch-button ui-button-reset ui-interactive-lift ui-disabled"
+                  :class="{ 'view-switch-button--active': activeView === 'result' }"
+                  type="button"
+                  :disabled="!hasResultImage"
+                  @click="setActiveView('result')"
+                >
+                  夜景
+                </button>
               </div>
             </div>
-
-            <button
-              v-if="hasResultImage && activeView === 'result'"
-              class="download-float-button"
-              aria-label="下载成片"
-              type="button"
-              @click="downloadResult"
-            >
-              <span class="download-float-button__icon" aria-hidden="true">
-                <svg viewBox="0 0 20 20">
-                  <path
-                    d="M10 3.75v8.5m0 0 3-3m-3 3-3-3m-3 5.25h12"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="1.7"
-                  />
-                </svg>
-              </span>
-            </button>
           </div>
 
-          <label v-else class="empty-state" for="source-file-input">
-            <span class="empty-badge">NIGHT</span>
-            <strong class="empty-title">拖入或上传一张白天参考图</strong>
-            <span class="empty-description">
-              建议选择主体清晰、透视明确的商业街景或建筑立面，以获得更稳定、更真实的夜景表达。
-            </span>
-          </label>
-        </div>
+          <div class="image-stage" :class="stageFrameClasses">
+            <div v-if="displayedImageUrl" class="image-wrapper" :class="imageWrapperClasses">
+              <img :src="displayedImageUrl" :alt="stageTitle" class="stage-image">
 
-        <div class="stage-footer" v-if="false">
-          <div v-if="taskStatus" class="status-pill" :class="`status-pill--${statusVariant}`">
-            {{ taskStatus }}
+              <div v-if="isLoading && hasSourceImage" class="curtain-overlay" aria-hidden="true">
+                <div class="curtain-sweep" />
+                <div class="curtain-glow" />
+                <div class="curtain-caption">
+                  {{ loadingText }}
+                </div>
+              </div>
+
+              <button
+                v-if="hasResultImage && activeView === 'result'"
+                class="download-float-button"
+                aria-label="下载成片"
+                type="button"
+                @click="downloadResult"
+              >
+                <span class="download-float-button__icon" aria-hidden="true">
+                  <svg viewBox="0 0 20 20">
+                    <path
+                      d="M10 3.75v8.5m0 0 3-3m-3 3-3-3m-3 5.25h12"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="1.7"
+                    />
+                  </svg>
+                </span>
+              </button>
+            </div>
+
+            <label v-else class="empty-state" for="source-file-input">
+              <span class="empty-badge">NIGHT</span>
+              <strong class="empty-title">拖入或上传一张白天参考图</strong>
+              <span class="empty-description">
+                建议选择主体清晰、透视明确的商业街景或建筑立面，以获得更稳定、更真实的夜景表达。
+              </span>
+            </label>
+          </div>
+
+          <div class="stage-footer" v-if="false">
+            <div v-if="taskStatus" class="status-pill" :class="`status-pill--${statusVariant}`">
+              {{ taskStatus }}
+            </div>
           </div>
         </div>
       </div>
 
-      <section class="prompt-card">
-        <div class="prompt-header">
-          <p class="section-label">
-            Prompt Composer
-          </p>
-        </div>
+      <div class="prompt-shell">
+        <section class="prompt-card">
+          <div class="prompt-header">
+            <p class="section-label">
+              Prompt Composer
+            </p>
+          </div>
 
-        <textarea
-          v-model="customPrompt"
-          class="prompt-textarea"
-          placeholder="请描述你想要的夜景气质..."
-          rows="2"
-        />
+          <textarea
+            v-model="customPrompt"
+            class="prompt-textarea"
+            placeholder="请描述你想要的夜景气质..."
+            rows="2"
+          />
 
-        <div class="prompt-actions">
-          <button
-            class="primary-button ui-button-reset ui-interactive-lift ui-disabled"
-            type="button"
-            :disabled="isLoading"
-            @click="handleGenerate"
+          <div class="prompt-actions">
+            <button
+              class="primary-button ui-button-reset ui-interactive-lift ui-disabled"
+              type="button"
+              :disabled="isLoading"
+              @click="handleGenerate"
+            >
+              {{ primaryActionLabel }}
+            </button>
+          </div>
+
+          <input
+            id="source-file-input"
+            class="visually-hidden"
+            type="file"
+            accept="image/*"
+            @change="handleFileSelect"
           >
-            {{ primaryActionLabel }}
-          </button>
-        </div>
-
-        <input
-          id="source-file-input"
-          class="visually-hidden"
-          type="file"
-          accept="image/*"
-          @change="handleFileSelect"
-        >
-      </section>
+        </section>
+      </div>
     </main>
   </section>
 </template>
@@ -442,8 +446,8 @@ async function handleRetry() {
   position: relative;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
-  min-height: calc(100vh - 210px);
-  min-height: calc(100dvh - 210px);
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 16px;
@@ -473,9 +477,20 @@ async function handleRetry() {
 .image-main {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  min-height: 0;
   min-width: 0;
-  padding: 16px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.88), transparent 40%),
+    rgba(250, 250, 249, 0.9);
+}
+
+.image-scroll-region {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 16px 16px 12px;
 }
 
 .studio-stage-card,
@@ -492,6 +507,12 @@ async function handleRetry() {
     0 24px 80px rgba(15, 23, 42, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(18px);
+}
+
+.prompt-shell {
+  flex-shrink: 0;
+  padding: 0 16px 16px;
+  background: linear-gradient(180deg, rgba(250, 250, 249, 0), rgba(250, 250, 249, 0.96) 32%);
 }
 
 .section-label {
@@ -539,7 +560,7 @@ async function handleRetry() {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 420px;
+  min-height: min(62vh, 720px);
   margin-top: 24px;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 28px;
@@ -762,6 +783,7 @@ async function handleRetry() {
 
 .prompt-textarea {
   width: 100%;
+  min-height: 92px;
   margin-top: 18px;
   padding: 2px 2px 12px;
   border: none;
@@ -770,7 +792,7 @@ async function handleRetry() {
   font: inherit;
   font-size: 15px;
   line-height: 1.9;
-  resize: vertical;
+  resize: none;
   outline: none;
 }
 
@@ -936,7 +958,6 @@ async function handleRetry() {
 @media (max-width: 1080px) {
   .image-layout {
     grid-template-columns: 1fr;
-    overflow: visible;
   }
 
   .image-sidebar {
@@ -962,8 +983,12 @@ async function handleRetry() {
 }
 
 @media (max-width: 640px) {
-  .image-main {
-    padding: 16px;
+  .image-scroll-region {
+    padding: 16px 12px 10px;
+  }
+
+  .prompt-shell {
+    padding: 0 12px 12px;
   }
 
   .studio-stage-card,
@@ -988,7 +1013,7 @@ async function handleRetry() {
   }
 
   .prompt-textarea {
-    padding: 16px 18px;
+    min-height: 112px;
   }
 
   .primary-button,

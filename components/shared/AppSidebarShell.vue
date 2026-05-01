@@ -136,7 +136,7 @@ function unlockBodyScroll() {
           <slot />
         </div>
 
-        <div v-if="props.expanded" class="sidebar-footer">
+        <div v-if="false" class="sidebar-footer">
           <slot name="footer" />
         </div>
       </aside>
@@ -202,7 +202,7 @@ function unlockBodyScroll() {
         <slot />
       </div>
 
-      <div v-if="props.expanded" class="sidebar-footer">
+      <div v-if="false" class="sidebar-footer">
         <slot name="footer" />
       </div>
     </aside>

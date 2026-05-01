@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { CSSProperties } from 'vue'
 import AppSidebarShell from '~/components/shared/AppSidebarShell.vue'
 import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
 import { useLocalImageHistory } from '~/composables/useLocalImageHistory'
@@ -50,12 +51,18 @@ const isMobileViewport = shallowRef(false)
 const activeHistoryId = shallowRef('')
 const draftHistoryId = shallowRef('')
 const shouldAnimateResultReveal = shallowRef(false)
-let resultRevealTimer: ReturnType<typeof window.setTimeout> | null = null
+const promptShellElement = shallowRef<HTMLElement | null>(null)
+const mobilePromptOffset = shallowRef('0px')
+let resultRevealTimer: number | null = null
 let mobileViewportQuery: MediaQueryList | null = null
+let promptResizeObserver: ResizeObserver | null = null
 const isMobileSidebarOpen = computed({
   get: () => props.mobileSidebarOpen,
   set: value => emit('update:mobileSidebarOpen', value),
 })
+const imageMainStyle = computed<CSSProperties & Record<'--mobile-prompt-offset', string>>(() => ({
+  '--mobile-prompt-offset': mobilePromptOffset.value,
+}))
 
 const stageTitle = computed(() => {
   if (hasResultImage.value && activeView.value === 'result') {
@@ -95,6 +102,7 @@ const imageWrapperClasses = computed(() => ({
 
 onMounted(() => {
   setupMobileViewportWatcher()
+  setupPromptShellObserver()
   loadRecords()
 
   const latestRecord = getLatestRecord()
@@ -153,6 +161,7 @@ watch(resultUrl, (nextValue, previousValue) => {
 
 onBeforeUnmount(() => {
   mobileViewportQuery?.removeEventListener('change', handleMobileViewportChange)
+  promptResizeObserver?.disconnect()
 
   if (!resultRevealTimer) {
     return
@@ -254,6 +263,8 @@ function handleMobileViewportChange(event: MediaQueryListEvent) {
   if (!event.matches) {
     isMobileSidebarOpen.value = false
   }
+
+  syncMobilePromptOffset()
 }
 
 function handleFileSelect(event: Event) {
@@ -287,6 +298,32 @@ async function handleRetry() {
     window.alert(`失败：${message}`)
   }
 }
+
+function setupPromptShellObserver() {
+  if (!window.ResizeObserver) {
+    syncMobilePromptOffset()
+    return
+  }
+
+  promptResizeObserver = new window.ResizeObserver(() => {
+    syncMobilePromptOffset()
+  })
+
+  if (promptShellElement.value) {
+    promptResizeObserver.observe(promptShellElement.value)
+  }
+
+  syncMobilePromptOffset()
+}
+
+function syncMobilePromptOffset() {
+  if (!isMobileViewport.value || !promptShellElement.value) {
+    mobilePromptOffset.value = '0px'
+    return
+  }
+
+  mobilePromptOffset.value = `${Math.ceil(promptShellElement.value.getBoundingClientRect().height)}px`
+}
 </script>
 
 <template>
@@ -315,7 +352,7 @@ async function handleRetry() {
       />
     </AppSidebarShell>
 
-    <main class="image-main">
+    <main class="image-main" :style="imageMainStyle">
       <div class="image-scroll-region">
         <div class="studio-stage-card">
           <div class="stage-header">
@@ -400,11 +437,9 @@ async function handleRetry() {
             </div>
           </div>
         </div>
-      </div>
-
-      <div class="prompt-shell">
-        <section class="prompt-card">
-          <div class="prompt-header">
+        <div ref="promptShellElement" class="prompt-shell">
+          <section class="prompt-card">
+            <div class="prompt-header">
             <p class="section-label">
               Prompt Composer
             </p>
@@ -414,7 +449,6 @@ async function handleRetry() {
             v-model="customPrompt"
             class="prompt-textarea"
             placeholder="请描述你想要的夜景气质..."
-            rows="2"
           />
 
           <div class="prompt-actions">
@@ -435,7 +469,8 @@ async function handleRetry() {
             accept="image/*"
             @change="handleFileSelect"
           >
-        </section>
+          </section>
+        </div>
       </div>
     </main>
   </section>
@@ -511,7 +546,7 @@ async function handleRetry() {
 
 .prompt-shell {
   flex-shrink: 0;
-  padding: 0 16px 16px;
+  padding-top: 16px;
   background: linear-gradient(180deg, rgba(250, 250, 249, 0), rgba(250, 250, 249, 0.96) 32%);
 }
 
@@ -784,8 +819,6 @@ async function handleRetry() {
 .prompt-textarea {
   width: 100%;
   min-height: 92px;
-  margin-top: 18px;
-  padding: 2px 2px 12px;
   border: none;
   background: transparent;
   color: #111827;
@@ -960,18 +993,37 @@ async function handleRetry() {
     grid-template-columns: 1fr;
   }
 
+  .image-scroll-region {
+    padding-bottom: calc(var(--mobile-prompt-offset, 0px) + 16px);
+  }
+
+  .prompt-shell {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 20;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+    background:
+      linear-gradient(180deg, rgba(250, 250, 249, 0), rgba(250, 250, 249, 0.96) 26%, rgba(250, 250, 249, 1) 100%);
+    pointer-events: none;
+  }
+
+  .prompt-card {
+    pointer-events: auto;
+  }
+
   .image-sidebar {
     border-right: none;
     border-bottom: none;
   }
-
 }
 
 @media (max-width: 960px) {
   .stage-header,
   .prompt-header,
   .stage-footer {
-    flex-direction: column;
     align-items: flex-start;
   }
 
@@ -984,11 +1036,12 @@ async function handleRetry() {
 
 @media (max-width: 640px) {
   .image-scroll-region {
-    padding: 16px 12px 10px;
+    padding: 16px 12px calc(var(--mobile-prompt-offset, 0px) + 16px);
   }
 
   .prompt-shell {
-    padding: 0 12px 12px;
+    padding-right: 12px;
+    padding-left: 12px;
   }
 
   .studio-stage-card,
@@ -1013,7 +1066,7 @@ async function handleRetry() {
   }
 
   .prompt-textarea {
-    min-height: 112px;
+    min-height: 42px;
   }
 
   .primary-button,

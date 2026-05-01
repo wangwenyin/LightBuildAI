@@ -35,7 +35,7 @@ export async function uploadOSS(buffer: Buffer, filename: string, config: OssRun
         Date: date,
         'Content-Type': contentType,
       },
-      body: buffer,
+      body: new Uint8Array(buffer),
     })
 
     if (!response.ok) {

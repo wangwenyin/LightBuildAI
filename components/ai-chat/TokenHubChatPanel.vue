@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import AppSidebarShell from '~/components/shared/AppSidebarShell.vue'
 import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
-import { useLocalChatHistory, type LocalChatMessage } from '~/composables/useLocalChatHistory'
+import { useLocalChatHistory } from '~/composables/useLocalChatHistory'
 
 const props = withDefaults(defineProps<{
   mobileSidebarOpen?: boolean
@@ -35,13 +35,16 @@ type MessageBlock =
   | { type: 'divider' }
   | { type: 'code', content: string }
 
+type HeadingBlock = Extract<MessageBlock, { type: 'heading' }>
+type ListBlock = Extract<MessageBlock, { type: 'list' }>
+
 const inputMessage = shallowRef('')
 const isLoading = shallowRef(false)
 const errorMessage = shallowRef('')
 const currentModel = shallowRef('')
 const currentRequestId = shallowRef('')
 const messages = ref<ChatMessage[]>([])
-const messageListRef = useTemplateRef<HTMLDivElement>('messageListRef')
+const messageListRef = shallowRef<HTMLDivElement | null>(null)
 const activeSessionId = shallowRef('')
 const isSidebarExpanded = shallowRef(true)
 const isMobileViewport = shallowRef(false)
@@ -198,7 +201,7 @@ async function sendMessage() {
       content: `当前请求失败：${message}`,
     })
   } finally {
-    saveSession(activeSessionId.value || createSessionId(), messages.value as LocalChatMessage[])
+    saveSession(activeSessionId.value || createSessionId(), messages.value)
     isLoading.value = false
   }
 }
@@ -404,6 +407,18 @@ function parseMessageBlocks(content: string): MessageBlock[] {
     }
   })
 }
+
+function isHeadingBlock(block: MessageBlock): block is HeadingBlock {
+  return block.type === 'heading'
+}
+
+function isListBlock(block: MessageBlock): block is ListBlock {
+  return block.type === 'list'
+}
+
+function getHeadingTag(block: HeadingBlock) {
+  return block.level === 1 ? 'h2' : block.level === 2 ? 'h3' : 'h4'
+}
 </script>
 
 <template>
@@ -468,8 +483,8 @@ function parseMessageBlocks(content: string): MessageBlock[] {
             <div class="message-bubble">
               <template v-for="(block, blockIndex) in parseMessageBlocks(message.content)" :key="`${message.id}-${blockIndex}`">
                 <component
-                  :is="block.level === 1 ? 'h2' : block.level === 2 ? 'h3' : 'h4'"
-                  v-if="block.type === 'heading'"
+                  v-if="isHeadingBlock(block)"
+                  :is="getHeadingTag(block)"
                   class="message-heading"
                 >
                   {{ block.content }}
@@ -485,7 +500,7 @@ function parseMessageBlocks(content: string): MessageBlock[] {
                     <template v-else>{{ part.content }}</template>
                   </template>
                 </p>
-                <ul v-else-if="block.type === 'list'" class="message-list-block">
+                <ul v-else-if="isListBlock(block)" class="message-list-block">
                   <li v-for="item in block.items" :key="item" class="message-list-item">
                     <template v-for="(part, partIndex) in formatInlineParts(item)" :key="`${item}-${partIndex}`">
                       <strong v-if="part.type === 'strong'" class="message-strong">{{ part.content }}</strong>

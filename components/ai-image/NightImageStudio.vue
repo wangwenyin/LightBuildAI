@@ -33,6 +33,7 @@ const {
   restoreHistorySnapshot,
   resultUrl,
   retryGenerate,
+  sessionId,
   setActiveView,
   sourcePreviewUrl,
   statusVariant,
@@ -136,6 +137,7 @@ watch(
 
     saveRecord({
       id: draftHistoryId.value,
+      sessionId: sessionId.value || undefined,
       taskId: currentTaskId.value || undefined,
       prompt: customPrompt.value,
       sourceImageUrl: historySourceImageUrl.value,

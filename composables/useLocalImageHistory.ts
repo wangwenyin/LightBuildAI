@@ -1,5 +1,6 @@
 export type LocalImageHistoryRecord = {
   id: string
+  sessionId?: string
   taskId?: string
   title: string
   prompt: string

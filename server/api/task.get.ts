@@ -1,9 +1,12 @@
 import { queryNightImageJob } from '../utils/hunyuan'
+import { persistGeneratedImage } from '../utils/result-image'
+import { validateSessionId } from '../utils/validation'
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event)
-  const { taskId } = getQuery(event)
+  const { taskId, sessionId } = getQuery(event)
   const normalizedTaskId = Array.isArray(taskId) ? taskId[0] : taskId
+  const normalizedSessionId = validateSessionId(Array.isArray(sessionId) ? sessionId[0] : sessionId)
 
   if (!normalizedTaskId) {
     throw createError({
@@ -20,9 +23,28 @@ export default defineEventHandler(async (event) => {
       tokenHubApiKey: config.tokenHubImageApiKey,
     })
 
+    const imageUrl = result.status === 'done' && result.imageUrl
+      ? await persistGeneratedImage({
+          imageUrl: result.imageUrl,
+          taskId: normalizedTaskId,
+          sessionId: normalizedSessionId || 'anonymous',
+          config: {
+            ossRegion: config.ossRegion,
+            ossAccessKeyId: config.ossAccessKeyId,
+            ossAccessKeySecret: config.ossAccessKeySecret,
+            ossBucket: config.ossBucket,
+            ossEndpoint: config.ossEndpoint,
+            ossDir: config.ossDir,
+          },
+        })
+      : result.status === 'done'
+        ? result.imageUrl
+        : undefined
+
     return {
       taskId: normalizedTaskId,
       ...result,
+      ...(imageUrl ? { imageUrl } : {}),
     }
   } catch (error) {
     console.error('读取任务状态失败', error)

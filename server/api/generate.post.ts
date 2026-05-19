@@ -16,6 +16,7 @@ export default defineEventHandler(async (event) => {
     revise?: boolean
   }>(event)
   const {
+    sessionId,
     originalUrl,
     originalImageWidth,
     originalImageHeight,
@@ -31,6 +32,7 @@ export default defineEventHandler(async (event) => {
   const normalizedOriginalUrl = originalUrl || undefined
 
   console.log('Generate request image dimensions:', {
+    sessionId,
     originalImageWidth,
     originalImageHeight,
     uploadedImageWidth: imageWidth,
@@ -61,6 +63,7 @@ export default defineEventHandler(async (event) => {
       reviseRequested: revise ?? true,
       hasReferenceImage: Boolean(normalizedOriginalUrl),
       provider: result.provider,
+      sessionId: sessionId || 'anonymous',
       seed: result.seed,
       size: result.size,
     },

@@ -20,6 +20,7 @@ export type ValidatedChatMessage = {
 }
 
 export type ValidatedGenerateBody = {
+  sessionId?: string
   originalUrl?: string
   originalImageWidth?: number
   originalImageHeight?: number
@@ -34,6 +35,24 @@ export type ValidatedUploadFile = {
   filename: string
   mimeType: UploadMimeType
   size: number
+}
+
+export function validateSessionId(value: unknown, fieldName = 'sessionId') {
+  const sessionId = normalizeOptionalString(value, {
+    fieldName,
+    maxLength: 128,
+    trim: true,
+  })
+
+  if (!sessionId) {
+    return undefined
+  }
+
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{5,127}$/.test(sessionId)) {
+    throw badRequest(`${fieldName} 格式不合法`)
+  }
+
+  return sessionId
 }
 
 export function validateChatRequestBody(body: unknown) {
@@ -56,6 +75,7 @@ export function validateChatRequestBody(body: unknown) {
 
 export function validateGenerateRequestBody(body: unknown): ValidatedGenerateBody {
   const normalizedBody = asRecord(body, '请求体格式不合法')
+  const sessionId = validateSessionId(normalizedBody.sessionId)
   const originalUrl = normalizeOptionalString(normalizedBody.originalUrl, {
     fieldName: 'originalUrl',
     maxLength: 2048,
@@ -86,6 +106,7 @@ export function validateGenerateRequestBody(body: unknown): ValidatedGenerateBod
   }
 
   return {
+    sessionId,
     originalUrl,
     originalImageWidth,
     originalImageHeight,

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { createHmac, randomUUID } from 'node:crypto'
 
-const uploadDir = path.join(process.cwd(), 'public/uploads')
+const publicDir = path.join(process.cwd(), 'public')
 
 type OssRuntimeConfig = {
   ossRegion?: string
@@ -12,16 +12,17 @@ type OssRuntimeConfig = {
   ossEndpoint?: string
   ossDir?: string
   contentType?: string
+  objectKey?: string
 }
 
 export async function uploadOSS(buffer: Buffer, filename: string, config: OssRuntimeConfig = {}) {
   const contentType = config.contentType || detectContentType(filename)
+  const objectKey = config.objectKey || buildObjectName(filename, config.ossDir)
 
   if (hasOssConfig(config)) {
-    const objectName = buildObjectName(filename, config.ossDir)
     const date = new Date().toUTCString()
     const endpoint = normalizeEndpoint(config)
-    const resource = `/${config.ossBucket}/${objectName}`
+    const resource = `/${config.ossBucket}/${objectKey}`
     const signature = createOssSignature({
       method: 'PUT',
       contentType,
@@ -29,7 +30,7 @@ export async function uploadOSS(buffer: Buffer, filename: string, config: OssRun
       resource,
       accessKeySecret: config.ossAccessKeySecret!,
     })
-    const url = `https://${config.ossBucket}.${endpoint}/${encodeObjectPath(objectName)}`
+    const url = `https://${config.ossBucket}.${endpoint}/${encodeObjectPath(objectKey)}`
     const response = await fetch(url, {
       method: 'PUT',
       headers: {
@@ -51,15 +52,17 @@ export async function uploadOSS(buffer: Buffer, filename: string, config: OssRun
     return `data:${contentType};base64,${buffer.toString('base64')}`
   }
 
-  await fs.mkdir(uploadDir, { recursive: true })
+  const normalizedRelativePath = objectKey
+    .replace(/^\/+/, '')
+    .split('/')
+    .filter(Boolean)
+  const destination = path.join(publicDir, ...normalizedRelativePath)
+  const destinationDir = path.dirname(destination)
 
-  const safeName = sanitizeFilename(filename)
-  const name = `${Date.now()}-${safeName}`
-  const destination = path.join(uploadDir, name)
-
+  await fs.mkdir(destinationDir, { recursive: true })
   await fs.writeFile(destination, buffer)
 
-  return `/uploads/${name}`
+  return `/${['uploads', ...normalizedRelativePath].map(segment => encodeURIComponent(segment)).join('/')}`
 }
 
 function hasOssConfig(config: OssRuntimeConfig) {

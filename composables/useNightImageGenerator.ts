@@ -8,6 +8,7 @@ type GenerateResponse = {
     reviseRequested: boolean
     hasReferenceImage: boolean
     provider?: 'hunyuan-text-to-image' | 'tokenhub-reference-image'
+    sessionId?: string
     seed?: number
     size?: string
   }
@@ -46,6 +47,7 @@ const DEFAULT_IMAGE_QUALITY = 0.9
 const MAX_IMAGE_DIMENSION = 1600
 
 export function useNightImageGenerator() {
+  const { ensureSessionId, sessionId } = useClientSession()
   const sourceFile = shallowRef<File | null>(null)
   const sourceRemoteUrl = shallowRef('')
   const sourcePreviewUrl = shallowRef('')
@@ -182,6 +184,7 @@ export function useNightImageGenerator() {
 
   async function generateNightImage() {
     isLoading.value = true
+    const activeSessionId = ensureSessionId()
     resultUrl.value = ''
     taskStatus.value = sourceFile.value ? '正在上传原图...' : '正在提交生成任务...'
     loadingText.value = sourceFile.value ? '上传中...' : '提交任务中...'
@@ -208,14 +211,16 @@ export function useNightImageGenerator() {
 
         const form = new FormData()
         form.append('file', preparedFileMeta.file)
+        form.append('sessionId', activeSessionId)
 
-        const uploadResponse = await $fetch<{ url: string }>('/api/upload', {
+        const uploadResponse = await $fetch<{ url: string, requestId?: string }>('/api/upload', {
           method: 'POST',
           body: form,
         })
 
         originalUrl = uploadResponse.url
         sourceRemoteUrl.value = uploadResponse.url
+        currentRequestId.value = uploadResponse.requestId ?? ''
       }
 
       taskStatus.value = originalUrl ? '已上传，正在提交生成任务...' : '正在提交生成任务...'
@@ -224,6 +229,7 @@ export function useNightImageGenerator() {
       const generateResponse = await $fetch<GenerateResponse>('/api/generate', {
         method: 'POST',
         body: {
+          sessionId: activeSessionId,
           ...(originalUrl ? { originalUrl } : {}),
           ...(preparedFileMeta ? {
             originalImageWidth: originalImageDimensions?.width,
@@ -239,7 +245,7 @@ export function useNightImageGenerator() {
 
       currentTaskId.value = generateResponse.taskId
       currentProvider.value = generateResponse.debug?.provider ?? ''
-      currentRequestId.value = generateResponse.requestId ?? ''
+      currentRequestId.value = generateResponse.requestId ?? currentRequestId.value
       currentSeed.value = generateResponse.debug?.seed ?? null
       currentSize.value = generateResponse.debug?.size ?? ''
       taskStatus.value = buildSubmitStatus({
@@ -253,7 +259,7 @@ export function useNightImageGenerator() {
       if (generateResponse.imageUrl) {
         resultUrl.value = generateResponse.imageUrl
       } else {
-        resultUrl.value = await pollTask(generateResponse.taskId, taskStatus, revisedPrompt)
+        resultUrl.value = await pollTask(generateResponse.taskId, activeSessionId, taskStatus, revisedPrompt)
       }
 
       activeView.value = 'result'
@@ -320,6 +326,7 @@ export function useNightImageGenerator() {
     currentSeed,
     currentSize,
     currentTaskId,
+    sessionId,
     enableNegativePrompt,
     customPrompt,
     customNegativePrompt,
@@ -511,6 +518,7 @@ function getImageDimensions(file: File) {
 
 async function pollTask(
   taskId: string,
+  sessionId: string,
   taskStatus: { value: string },
   revisedPrompt: { value: string },
 ) {
@@ -518,7 +526,10 @@ async function pollTask(
     await sleep(POLL_INTERVAL_MS)
 
     const task = await $fetch<TaskResponse>('/api/task', {
-      query: { taskId },
+      query: {
+        taskId,
+        sessionId,
+      },
     })
 
     if (task.revisedPrompt) {

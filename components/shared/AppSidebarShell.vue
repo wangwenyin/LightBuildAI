@@ -14,24 +14,30 @@ const props = withDefaults(defineProps<{
   mobileOpen: false,
 })
 
-defineEmits<{
+const emit = defineEmits<{
   toggle: []
   action: []
   closeMobile: []
 }>()
 
+const slots = useSlots()
 const isMobileViewport = shallowRef(false)
+const sidebarElement = shallowRef<HTMLElement | null>(null)
+const actionButtonElement = shallowRef<HTMLButtonElement | null>(null)
+const toggleButtonElement = shallowRef<HTMLButtonElement | null>(null)
+let previousFocusedElement: HTMLElement | null = null
 let mobileViewportQuery: MediaQueryList | null = null
 
 onMounted(() => {
   mobileViewportQuery = window.matchMedia('(max-width: 1080px)')
   isMobileViewport.value = mobileViewportQuery.matches
-  mobileViewportQuery.addEventListener('change', handleViewportChange)
+  bindViewportListener(mobileViewportQuery, handleViewportChange)
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleWindowKeydown)
   unlockBodyScroll()
-  mobileViewportQuery?.removeEventListener('change', handleViewportChange)
+  unbindViewportListener(mobileViewportQuery, handleViewportChange)
 })
 
 function handleViewportChange(event: MediaQueryListEvent) {
@@ -40,16 +46,46 @@ function handleViewportChange(event: MediaQueryListEvent) {
 
 watch(
   () => [props.mobileOpen, isMobileViewport.value],
-  ([mobileOpen, mobileViewport]) => {
-    if (mobileOpen && mobileViewport) {
-      lockBodyScroll()
+  async ([mobileOpen, mobileViewport], previousState) => {
+    if (!import.meta.client) {
       return
     }
 
+    const [previousMobileOpen = false, previousViewport = false] = previousState ?? []
+
+    if (mobileOpen && mobileViewport) {
+      if (!previousMobileOpen || !previousViewport) {
+        previousFocusedElement = document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null
+      }
+
+      lockBodyScroll()
+      window.addEventListener('keydown', handleWindowKeydown)
+      await nextTick()
+      focusSidebarEntry()
+      return
+    }
+
+    window.removeEventListener('keydown', handleWindowKeydown)
     unlockBodyScroll()
+
+    if (previousMobileOpen && previousFocusedElement) {
+      previousFocusedElement.focus()
+      previousFocusedElement = null
+    }
   },
   { immediate: true },
 )
+
+function focusSidebarEntry() {
+  if (!import.meta.client) {
+    return
+  }
+
+  const target = actionButtonElement.value ?? toggleButtonElement.value ?? sidebarElement.value
+  target?.focus()
+}
 
 function lockBodyScroll() {
   if (!import.meta.client) {
@@ -66,6 +102,40 @@ function unlockBodyScroll() {
 
   document.body.style.overflow = ''
 }
+
+function handleWindowKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || !props.mobileOpen || !isMobileViewport.value) {
+    return
+  }
+
+  emit('closeMobile')
+}
+
+function bindViewportListener(query: MediaQueryList | null, listener: (event: MediaQueryListEvent) => void) {
+  if (!query) {
+    return
+  }
+
+  if ('addEventListener' in query) {
+    query.addEventListener('change', listener)
+    return
+  }
+
+  query.addListener(listener)
+}
+
+function unbindViewportListener(query: MediaQueryList | null, listener: (event: MediaQueryListEvent) => void) {
+  if (!query) {
+    return
+  }
+
+  if ('removeEventListener' in query) {
+    query.removeEventListener('change', listener)
+    return
+  }
+
+  query.removeListener(listener)
+}
 </script>
 
 <template>
@@ -79,15 +149,19 @@ function unlockBodyScroll() {
         type="button"
         tabindex="-1"
         aria-label="关闭侧边栏"
-        @click="$emit('closeMobile')"
+        @click="emit('closeMobile')"
       />
 
       <aside
+        ref="sidebarElement"
         class="app-sidebar-shell"
         :class="{
           'app-sidebar-shell--collapsed': !props.expanded,
           'app-sidebar-shell--mobile-open': props.mobileOpen,
         }"
+        role="dialog"
+        aria-modal="true"
+        tabindex="-1"
       >
         <div class="sidebar-top">
           <div class="sidebar-brand" :class="{ 'sidebar-brand--collapsed': !props.expanded }">
@@ -103,11 +177,12 @@ function unlockBodyScroll() {
 
           <div class="sidebar-top-actions">
             <button
+              ref="toggleButtonElement"
               class="sidebar-toggle"
               :class="{ 'sidebar-toggle--collapsed': !props.expanded }"
               type="button"
               :aria-label="props.expanded ? '收起侧边栏' : '展开侧边栏'"
-              @click="$emit('toggle')"
+              @click="emit('toggle')"
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path
@@ -123,7 +198,12 @@ function unlockBodyScroll() {
           </div>
         </div>
 
-        <button class="sidebar-action-button" type="button" @click="$emit('action')">
+        <button
+          ref="actionButtonElement"
+          class="sidebar-action-button"
+          type="button"
+          @click="emit('action')"
+        >
           <template v-if="!props.expanded">
             <slot name="action-icon">
               <span>{{ props.collapsedActionLabel }}</span>
@@ -136,7 +216,7 @@ function unlockBodyScroll() {
           <slot />
         </div>
 
-        <div v-if="false" class="sidebar-footer">
+        <div v-if="slots.footer" class="sidebar-footer">
           <slot name="footer" />
         </div>
       </aside>
@@ -149,6 +229,7 @@ function unlockBodyScroll() {
     :class="{ 'app-sidebar-shell-layer--mobile-open': props.mobileOpen }"
   >
     <aside
+      ref="sidebarElement"
       class="app-sidebar-shell"
       :class="{
         'app-sidebar-shell--collapsed': !props.expanded,
@@ -169,11 +250,12 @@ function unlockBodyScroll() {
 
         <div class="sidebar-top-actions">
           <button
+            ref="toggleButtonElement"
             class="sidebar-toggle"
             :class="{ 'sidebar-toggle--collapsed': !props.expanded }"
             type="button"
             :aria-label="props.expanded ? '收起侧边栏' : '展开侧边栏'"
-            @click="$emit('toggle')"
+            @click="emit('toggle')"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -189,7 +271,12 @@ function unlockBodyScroll() {
         </div>
       </div>
 
-      <button class="sidebar-action-button" type="button" @click="$emit('action')">
+      <button
+        ref="actionButtonElement"
+        class="sidebar-action-button"
+        type="button"
+        @click="emit('action')"
+      >
         <template v-if="!props.expanded">
           <slot name="action-icon">
             <span>{{ props.collapsedActionLabel }}</span>
@@ -202,7 +289,7 @@ function unlockBodyScroll() {
         <slot />
       </div>
 
-      <div v-if="false" class="sidebar-footer">
+      <div v-if="slots.footer" class="sidebar-footer">
         <slot name="footer" />
       </div>
     </aside>
@@ -399,11 +486,11 @@ function unlockBodyScroll() {
 .app-sidebar-shell--collapsed .sidebar-top {
   width: 100%;
   justify-content: center;
+  gap: 0;
 }
 
 .app-sidebar-shell--collapsed .sidebar-brand {
-  opacity: 1;
-  transform: scale(1);
+  display: none;
   transition:
     opacity 0.2s ease,
     transform 0.24s ease;
@@ -420,24 +507,15 @@ function unlockBodyScroll() {
 }
 
 .app-sidebar-shell--collapsed .sidebar-toggle {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-50%) translateX(6px);
-}
-
-.app-sidebar-shell--collapsed .sidebar-top:hover .sidebar-brand {
-  opacity: 0;
-  transform: scale(0.92);
-  pointer-events: none;
-}
-
-.app-sidebar-shell--collapsed .sidebar-top:hover .sidebar-toggle {
+  position: static;
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(-50%) translateX(0);
+  transform: none;
+}
+
+.app-sidebar-shell--collapsed .sidebar-top-actions {
+  width: auto;
+  justify-content: center;
 }
 
 .sidebar-content {
@@ -449,6 +527,8 @@ function unlockBodyScroll() {
 
 .sidebar-footer {
   margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid rgba(17, 24, 39, 0.06);
 }
 
 @media (max-width: 640px) {
@@ -508,10 +588,13 @@ function unlockBodyScroll() {
   }
 
   .app-sidebar-shell--collapsed .sidebar-top {
+    flex-direction: row;
     justify-content: space-between;
+    gap: 10px;
   }
 
   .app-sidebar-shell--collapsed .sidebar-brand {
+    display: flex;
     width: auto;
     justify-content: flex-start;
   }
@@ -528,6 +611,11 @@ function unlockBodyScroll() {
     opacity: 1;
     pointer-events: auto;
     transform: none;
+  }
+
+  .app-sidebar-shell--collapsed .sidebar-top-actions {
+    width: auto;
+    justify-content: flex-end;
   }
 
   .sidebar-backdrop {

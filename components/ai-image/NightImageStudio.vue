@@ -16,6 +16,7 @@ const emit = defineEmits<{
 
 const {
   activeView,
+  canRetry,
   customPrompt,
   currentTaskId,
   displayedImageUrl,
@@ -160,7 +161,7 @@ watch(resultUrl, (nextValue, previousValue) => {
 })
 
 onBeforeUnmount(() => {
-  mobileViewportQuery?.removeEventListener('change', handleMobileViewportChange)
+  unbindViewportListener(mobileViewportQuery, handleMobileViewportChange)
   promptResizeObserver?.disconnect()
 
   if (!resultRevealTimer) {
@@ -254,7 +255,7 @@ function setupMobileViewportWatcher() {
   mobileViewportQuery = window.matchMedia('(max-width: 1080px)')
   isMobileViewport.value = mobileViewportQuery.matches
   isMobileSidebarOpen.value = false
-  mobileViewportQuery.addEventListener('change', handleMobileViewportChange)
+  bindViewportListener(mobileViewportQuery, handleMobileViewportChange)
 }
 
 function handleMobileViewportChange(event: MediaQueryListEvent) {
@@ -284,18 +285,16 @@ async function handleGenerate() {
 
     await generateNightImage()
     activeHistoryId.value = draftHistoryId.value
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '生成失败'
-    window.alert(`失败：${message}`)
+  } catch {
+    // 失败状态已由 composable 写入 taskStatus，这里不再使用阻断式弹窗。
   }
 }
 
 async function handleRetry() {
   try {
     await retryGenerate()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '生成失败'
-    window.alert(`失败：${message}`)
+  } catch {
+    // 保持页内状态反馈，避免打断当前工作流。
   }
 }
 
@@ -323,6 +322,32 @@ function syncMobilePromptOffset() {
   }
 
   mobilePromptOffset.value = `${Math.ceil(promptShellElement.value.getBoundingClientRect().height)}px`
+}
+
+function bindViewportListener(query: MediaQueryList | null, listener: (event: MediaQueryListEvent) => void) {
+  if (!query) {
+    return
+  }
+
+  if ('addEventListener' in query) {
+    query.addEventListener('change', listener)
+    return
+  }
+
+  query.addListener(listener)
+}
+
+function unbindViewportListener(query: MediaQueryList | null, listener: (event: MediaQueryListEvent) => void) {
+  if (!query) {
+    return
+  }
+
+  if ('removeEventListener' in query) {
+    query.removeEventListener('change', listener)
+    return
+  }
+
+  query.removeListener(listener)
 }
 </script>
 
@@ -431,10 +456,25 @@ function syncMobilePromptOffset() {
             </label>
           </div>
 
-          <div class="stage-footer" v-if="false">
-            <div v-if="taskStatus" class="status-pill" :class="`status-pill--${statusVariant}`">
-              {{ taskStatus }}
-            </div>
+          <div v-if="taskStatus || canRetry" class="stage-footer">
+            <p
+              v-if="taskStatus"
+              class="status-inline"
+              :class="`status-inline--${statusVariant}`"
+              aria-live="polite"
+            >
+              <span class="status-inline-dot" aria-hidden="true" />
+              <span>{{ taskStatus }}</span>
+            </p>
+
+            <button
+              v-if="canRetry && !isLoading"
+              class="status-link-button ui-button-reset"
+              type="button"
+              @click="handleRetry"
+            >
+              重试
+            </button>
           </div>
         </div>
         <div ref="promptShellElement" class="prompt-shell">
@@ -769,28 +809,59 @@ function syncMobilePromptOffset() {
   margin-top: 18px;
 }
 
-.status-pill {
-  flex-shrink: 0;
-  padding: 12px 16px;
-  border-radius: 999px;
+.status-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  color: #57534e;
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
-.status-pill--neutral,
-.status-pill--info {
-  background: rgba(15, 23, 42, 0.06);
-  color: #1f2937;
+.status-inline-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.72;
+  box-shadow: 0 0 0 6px rgba(120, 113, 108, 0.08);
 }
 
-.status-pill--success {
-  background: rgba(16, 185, 129, 0.12);
+.status-inline--neutral,
+.status-inline--info {
+  color: #57534e;
+}
+
+.status-inline--success {
   color: #047857;
 }
 
-.status-pill--error {
-  background: rgba(239, 68, 68, 0.12);
-  color: #b91c1c;
+.status-inline--success .status-inline-dot {
+  box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.12);
+}
+
+.status-inline--error {
+  color: #b45309;
+}
+
+.status-inline--error .status-inline-dot {
+  box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.12);
+}
+
+.status-link-button {
+  flex-shrink: 0;
+  padding: 0;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.status-link-button:hover {
+  color: #7c2d12;
 }
 
 .view-switch {
@@ -1024,6 +1095,11 @@ function syncMobilePromptOffset() {
   .stage-header,
   .prompt-header,
   .stage-footer {
+    align-items: flex-start;
+  }
+
+  .stage-footer {
+    flex-direction: column;
     align-items: flex-start;
   }
 

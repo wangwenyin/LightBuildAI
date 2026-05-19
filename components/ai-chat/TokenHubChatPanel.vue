@@ -111,7 +111,7 @@ onBeforeUnmount(() => {
   chatStreamResizeObserver?.disconnect()
   chatStreamMutationObserver?.disconnect()
   window.removeEventListener('resize', scheduleChatStreamMeasure)
-  mobileViewportQuery?.removeEventListener('change', handleMobileViewportChange)
+  unbindViewportListener(mobileViewportQuery, handleMobileViewportChange)
 })
 
 function clearConversation() {
@@ -242,7 +242,7 @@ function setupMobileViewportWatcher() {
   mobileViewportQuery = window.matchMedia('(max-width: 1080px)')
   isMobileViewport.value = mobileViewportQuery.matches
   isMobileSidebarOpen.value = false
-  mobileViewportQuery.addEventListener('change', handleMobileViewportChange)
+  bindViewportListener(mobileViewportQuery, handleMobileViewportChange)
 }
 
 function handleMobileViewportChange(event: MediaQueryListEvent) {
@@ -418,6 +418,32 @@ function isListBlock(block: MessageBlock): block is ListBlock {
 
 function getHeadingTag(block: HeadingBlock) {
   return block.level === 1 ? 'h2' : block.level === 2 ? 'h3' : 'h4'
+}
+
+function bindViewportListener(query: MediaQueryList | null, listener: (event: MediaQueryListEvent) => void) {
+  if (!query) {
+    return
+  }
+
+  if ('addEventListener' in query) {
+    query.addEventListener('change', listener)
+    return
+  }
+
+  query.addListener(listener)
+}
+
+function unbindViewportListener(query: MediaQueryList | null, listener: (event: MediaQueryListEvent) => void) {
+  if (!query) {
+    return
+  }
+
+  if ('removeEventListener' in query) {
+    query.removeEventListener('change', listener)
+    return
+  }
+
+  query.removeListener(listener)
 }
 </script>
 

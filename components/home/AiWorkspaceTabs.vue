@@ -4,7 +4,10 @@ import TokenHubChatPanel from '~/components/ai-chat/TokenHubChatPanel.vue'
 
 type WorkspaceTab = 'image' | 'chat'
 
-const activeTab = shallowRef<WorkspaceTab>('image')
+const route = useRoute()
+const router = useRouter()
+
+const activeTab = shallowRef<WorkspaceTab>(resolveWorkspaceTab(route.query.tab))
 const isMobileSidebarOpen = shallowRef(false)
 
 useHead(() => ({
@@ -36,6 +39,47 @@ const tabs: Array<{
 watch(activeTab, () => {
   isMobileSidebarOpen.value = false
 })
+
+watch(
+  () => route.query.tab,
+  (nextTab) => {
+    const resolvedTab = resolveWorkspaceTab(nextTab)
+
+    if (resolvedTab !== activeTab.value) {
+      activeTab.value = resolvedTab
+    }
+  },
+)
+
+watch(activeTab, async (nextTab) => {
+  if (route.query.tab === nextTab) {
+    return
+  }
+
+  await router.replace({
+    query: {
+      ...route.query,
+      tab: nextTab,
+    },
+  })
+})
+
+onMounted(async () => {
+  if (route.query.tab === activeTab.value) {
+    return
+  }
+
+  await router.replace({
+    query: {
+      ...route.query,
+      tab: activeTab.value,
+    },
+  })
+})
+
+function resolveWorkspaceTab(tabQuery: unknown): WorkspaceTab {
+  return tabQuery === 'chat' ? 'chat' : 'image'
+}
 </script>
 
 <template>

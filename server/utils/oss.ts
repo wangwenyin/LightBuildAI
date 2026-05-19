@@ -11,12 +11,14 @@ type OssRuntimeConfig = {
   ossBucket?: string
   ossEndpoint?: string
   ossDir?: string
+  contentType?: string
 }
 
 export async function uploadOSS(buffer: Buffer, filename: string, config: OssRuntimeConfig = {}) {
+  const contentType = config.contentType || detectContentType(filename)
+
   if (hasOssConfig(config)) {
     const objectName = buildObjectName(filename, config.ossDir)
-    const contentType = detectContentType(filename)
     const date = new Date().toUTCString()
     const endpoint = normalizeEndpoint(config)
     const resource = `/${config.ossBucket}/${objectName}`
@@ -46,7 +48,7 @@ export async function uploadOSS(buffer: Buffer, filename: string, config: OssRun
   }
 
   if (process.env.VERCEL) {
-    return `data:${detectContentType(filename)};base64,${buffer.toString('base64')}`
+    return `data:${contentType};base64,${buffer.toString('base64')}`
   }
 
   await fs.mkdir(uploadDir, { recursive: true })

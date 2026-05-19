@@ -1,28 +1,18 @@
 import { readBody } from 'h3'
 import { createTokenHubChatCompletion, type TokenHubChatMessage } from '../utils/tokenhub-chat'
+import { validateChatRequestBody } from '../utils/validation'
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event)
-  const {
-    message,
-    history,
-  } = await readBody<{
+  const body = await readBody<{
     message?: string
     history?: TokenHubChatMessage[]
   }>(event)
-
-  const normalizedMessage = message?.trim()
-
-  if (!normalizedMessage) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: '消息内容不能为空',
-    })
-  }
+  const { message, history } = validateChatRequestBody(body)
 
   return createTokenHubChatCompletion({
-    message: normalizedMessage,
-    history: Array.isArray(history) ? history : [],
+    message,
+    history,
     apiKey: config.tokenHubChatApiKey,
   })
 })

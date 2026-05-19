@@ -24,6 +24,8 @@ const {
   generateNightImage,
   hasResultImage,
   hasSourceImage,
+  historyResultImageUrl,
+  historySourceImageUrl,
   isLoading,
   loadingText,
   onFileChange,
@@ -124,7 +126,7 @@ watch(
     currentTaskId.value,
   ],
   () => {
-    if (!sourcePreviewUrl.value && !resultUrl.value) {
+    if (!historySourceImageUrl.value && !historyResultImageUrl.value) {
       return
     }
 
@@ -136,8 +138,8 @@ watch(
       id: draftHistoryId.value,
       taskId: currentTaskId.value || undefined,
       prompt: customPrompt.value,
-      sourceImageUrl: sourcePreviewUrl.value,
-      resultImageUrl: resultUrl.value,
+      sourceImageUrl: historySourceImageUrl.value,
+      resultImageUrl: historyResultImageUrl.value,
       status: taskStatus.value,
     })
   },

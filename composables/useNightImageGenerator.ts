@@ -69,6 +69,8 @@ export function useNightImageGenerator() {
 
   const hasSourceImage = computed(() => Boolean(sourcePreviewUrl.value))
   const hasResultImage = computed(() => Boolean(resultUrl.value))
+  const historySourceImageUrl = computed(() => getPersistableImageUrl(sourceRemoteUrl.value || sourcePreviewUrl.value))
+  const historyResultImageUrl = computed(() => getPersistableImageUrl(resultUrl.value))
   const displayedImageUrl = computed(() => {
     if (activeView.value === 'result' && resultUrl.value) {
       return resultUrl.value
@@ -128,7 +130,6 @@ export function useNightImageGenerator() {
     currentSeed.value = null
     currentSize.value = ''
     revisedPrompt.value = ''
-    sourceFileHint.value = ''
     canRetry.value = false
     activeView.value = 'source'
   }
@@ -327,6 +328,8 @@ export function useNightImageGenerator() {
     generateNightImage,
     hasResultImage,
     hasSourceImage,
+    historyResultImageUrl,
+    historySourceImageUrl,
     isLoading,
     loadingText,
     onFileChange,
@@ -601,4 +604,27 @@ function buildSubmitStatus(params: {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function getPersistableImageUrl(url: string) {
+  const normalized = url.trim()
+
+  if (!normalized) {
+    return ''
+  }
+
+  if (normalized.startsWith('blob:') || normalized.startsWith('data:')) {
+    return ''
+  }
+
+  if (normalized.startsWith('/uploads/')) {
+    return normalized
+  }
+
+  try {
+    const parsed = new URL(normalized)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? normalized : ''
+  } catch {
+    return ''
+  }
 }

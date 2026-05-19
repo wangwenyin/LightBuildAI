@@ -1,19 +1,11 @@
 import { getRequestURL, readBody } from 'h3'
 import { submitNightImageJob } from '../utils/hunyuan'
 import { buildNightNegativePrompt, buildNightPrompt } from '../../shared/nightPrompt'
+import { validateGenerateRequestBody } from '../utils/validation'
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event)
-  const {
-    originalUrl,
-    originalImageWidth,
-    originalImageHeight,
-    imageWidth,
-    imageHeight,
-    customPrompt,
-    customNegativePrompt,
-    revise,
-  } = await readBody<{
+  const body = await readBody<{
     originalUrl?: string
     originalImageWidth?: number
     originalImageHeight?: number
@@ -23,10 +15,20 @@ export default defineEventHandler(async (event) => {
     customNegativePrompt?: string
     revise?: boolean
   }>(event)
+  const {
+    originalUrl,
+    originalImageWidth,
+    originalImageHeight,
+    imageWidth,
+    imageHeight,
+    customPrompt,
+    customNegativePrompt,
+    revise,
+  } = validateGenerateRequestBody(body)
 
   const prompt = buildNightPrompt(customPrompt)
   const negativePrompt = buildNightNegativePrompt(customNegativePrompt)
-  const normalizedOriginalUrl = originalUrl?.trim() || undefined
+  const normalizedOriginalUrl = originalUrl || undefined
 
   console.log('Generate request image dimensions:', {
     originalImageWidth,

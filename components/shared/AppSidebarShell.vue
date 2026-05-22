@@ -299,6 +299,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 <style scoped lang="scss">
 .app-sidebar-shell-layer {
   position: relative;
+  height: 100%;
   min-height: 0;
 }
 
@@ -309,6 +310,8 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 .app-sidebar-shell {
   position: relative;
   display: flex;
+  height: 100%;
+  min-height: 0;
   flex-direction: column;
   gap: 18px;
   padding: 22px;

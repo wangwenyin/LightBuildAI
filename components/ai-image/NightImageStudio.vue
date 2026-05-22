@@ -16,7 +16,6 @@ const emit = defineEmits<{
 
 const {
   activeView,
-  canRetry,
   customPrompt,
   currentTaskId,
   displayedImageUrl,
@@ -26,13 +25,15 @@ const {
   hasSourceImage,
   historyResultImageUrl,
   historySourceImageUrl,
+  isFailed,
   isLoading,
+  lastErrorMessage,
   loadingText,
   onFileChange,
+  primaryActionLabel,
   resetGenerator,
   restoreHistorySnapshot,
   resultUrl,
-  retryGenerate,
   sessionId,
   setActiveView,
   sourcePreviewUrl,
@@ -57,6 +58,7 @@ const draftHistoryId = shallowRef('')
 const shouldAnimateResultReveal = shallowRef(false)
 const promptShellElement = shallowRef<HTMLElement | null>(null)
 const mobilePromptOffset = shallowRef('0px')
+const isRestoringHistory = shallowRef(false)
 let resultRevealTimer: number | null = null
 let mobileViewportQuery: MediaQueryList | null = null
 let promptResizeObserver: ResizeObserver | null = null
@@ -78,14 +80,6 @@ const stageTitle = computed(() => {
   }
 
   return '上传参考图，开始夜景生成'
-})
-
-const primaryActionLabel = computed(() => {
-  if (isLoading.value) {
-    return loadingText.value
-  }
-
-  return hasResultImage.value ? '再次生成' : '开始生成夜景'
 })
 
 const recentRecords = computed(() => records.value.map(record => ({
@@ -224,7 +218,9 @@ async function openHistory(recordId: string) {
     taskId: record.taskId,
   })
 
+  isRestoringHistory.value = true
   await refreshHistoryAssetUrls(record)
+  isRestoringHistory.value = false
   closeMobileSidebar()
 }
 
@@ -273,13 +269,15 @@ async function refreshHistoryAssetUrls(record: {
   resultImageUrl: string
   status: string
 }) {
-  let nextSourceImageUrl = record.sourceImageUrl
-  let nextResultImageUrl = record.resultImageUrl
+  const persistedSourceImageUrl = normalizeHistoryAssetUrl(record.sourceImageUrl)
+  const persistedResultImageUrl = normalizeHistoryAssetUrl(record.resultImageUrl)
+  let nextSourceImageUrl = persistedSourceImageUrl
+  let nextResultImageUrl = persistedResultImageUrl
 
   try {
-    if (record.sourceImageUrl && isPrivateOssUrl(record.sourceImageUrl)) {
+    if (persistedSourceImageUrl && isPrivateOssUrl(persistedSourceImageUrl)) {
       const source = await $fetch<{ url: string }>('/api/resource/sign', {
-        query: { url: record.sourceImageUrl },
+        query: { url: persistedSourceImageUrl },
       })
 
       nextSourceImageUrl = source.url
@@ -299,9 +297,9 @@ async function refreshHistoryAssetUrls(record: {
       if (task.imageUrl) {
         nextResultImageUrl = task.imageUrl
       }
-    } else if (record.resultImageUrl && isPrivateOssUrl(record.resultImageUrl)) {
+    } else if (persistedResultImageUrl && isPrivateOssUrl(persistedResultImageUrl)) {
       const result = await $fetch<{ url: string }>('/api/resource/sign', {
-        query: { url: record.resultImageUrl },
+        query: { url: persistedResultImageUrl },
       })
 
       nextResultImageUrl = result.url
@@ -320,17 +318,54 @@ async function refreshHistoryAssetUrls(record: {
       sessionId: record.sessionId,
       taskId: record.taskId,
       prompt: record.prompt,
-      sourceImageUrl: record.sourceImageUrl,
-      resultImageUrl: nextResultImageUrl || record.resultImageUrl,
+      sourceImageUrl: persistedSourceImageUrl,
+      resultImageUrl: persistedResultImageUrl,
       status: record.status,
     })
   } catch {
     // 历史记录保底回退到原始快照，不阻断用户查看已有信息。
+  } finally {
+    isRestoringHistory.value = false
   }
 }
 
 function isPrivateOssUrl(url: string) {
-  return /^https:\/\/[^/]+\.aliyuncs\.com\/uploads\//i.test(url) && !url.includes('OSSAccessKeyId=')
+  const normalized = url.trim()
+
+  if (!normalized || normalized.includes('OSSAccessKeyId=')) {
+    return false
+  }
+
+  if (normalized.startsWith('/uploads/')) {
+    return true
+  }
+
+  try {
+    const parsed = new URL(normalized)
+    return /^https?:$/i.test(parsed.protocol) && /^\/uploads\//i.test(parsed.pathname)
+  } catch {
+    return false
+  }
+}
+
+function normalizeHistoryAssetUrl(url: string) {
+  const normalized = url.trim()
+
+  if (!normalized) {
+    return ''
+  }
+
+  try {
+    const parsed = new URL(normalized)
+
+    if (/^\/uploads\//i.test(parsed.pathname)) {
+      return `${parsed.origin}${parsed.pathname}`
+    }
+
+    return normalized
+  } catch {
+    return normalized
+  }
 }
 
 function handleMobileViewportChange(event: MediaQueryListEvent) {
@@ -362,14 +397,6 @@ async function handleGenerate() {
     activeHistoryId.value = draftHistoryId.value
   } catch {
     // 失败状态已由 composable 写入 taskStatus，这里不再使用阻断式弹窗。
-  }
-}
-
-async function handleRetry() {
-  try {
-    await retryGenerate()
-  } catch {
-    // 保持页内状态反馈，避免打断当前工作流。
   }
 }
 
@@ -489,7 +516,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
           </div>
 
           <div class="image-stage" :class="stageFrameClasses">
-            <div v-if="displayedImageUrl" class="image-wrapper" :class="imageWrapperClasses">
+            <div v-if="isRestoringHistory" class="empty-state empty-state--loading" aria-live="polite">
+              <span class="empty-badge">RESTORE</span>
+              <strong class="empty-title">正在恢复记录</strong>
+              <span class="empty-description">
+                正在刷新图片访问地址和任务状态，请稍候。
+              </span>
+            </div>
+            <div v-else-if="displayedImageUrl" class="image-wrapper" :class="imageWrapperClasses">
               <img :src="displayedImageUrl" :alt="stageTitle" class="stage-image">
 
               <div v-if="isLoading && hasSourceImage" class="curtain-overlay" aria-hidden="true">
@@ -531,7 +565,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
             </label>
           </div>
 
-          <div v-if="taskStatus || canRetry" class="stage-footer">
+          <div v-if="taskStatus" class="stage-footer">
             <p
               v-if="taskStatus"
               class="status-inline"
@@ -542,14 +576,10 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
               <span>{{ taskStatus }}</span>
             </p>
 
-            <button
-              v-if="canRetry && !isLoading"
-              class="status-link-button ui-button-reset"
-              type="button"
-              @click="handleRetry"
-            >
-              重试
-            </button>
+            <p v-if="isFailed && lastErrorMessage" class="status-detail status-detail--error">
+              请检查图片访问权限、额度配置或稍后重试。
+              <span class="status-detail-meta">{{ lastErrorMessage }}</span>
+            </p>
           </div>
         </div>
         <div ref="promptShellElement" class="prompt-shell">
@@ -570,7 +600,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
             <button
               class="primary-button ui-button-reset ui-interactive-lift ui-disabled"
               type="button"
-              :disabled="isLoading"
+              :disabled="isLoading || isRestoringHistory"
               @click="handleGenerate"
             >
               {{ primaryActionLabel }}
@@ -852,6 +882,10 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   cursor: pointer;
 }
 
+.empty-state--loading {
+  cursor: default;
+}
+
 .empty-badge {
   padding: 8px 14px;
   border: 1px solid rgba(17, 24, 39, 0.1);
@@ -878,8 +912,8 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 
 .stage-footer {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 16px;
   margin-top: 18px;
 }
@@ -926,17 +960,22 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.12);
 }
 
-.status-link-button {
-  flex-shrink: 0;
-  padding: 0;
-  color: #111827;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.4;
+.status-detail {
+  margin: 0;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.7;
 }
 
-.status-link-button:hover {
-  color: #7c2d12;
+.status-detail--error {
+  color: #92400e;
+}
+
+.status-detail-meta {
+  display: block;
+  margin-top: 4px;
+  color: #b45309;
+  word-break: break-word;
 }
 
 .view-switch {

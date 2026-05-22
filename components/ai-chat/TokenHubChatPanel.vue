@@ -46,6 +46,7 @@ const currentRequestId = shallowRef('')
 const messages = ref<ChatMessage[]>([])
 const messageListRef = shallowRef<HTMLDivElement | null>(null)
 const activeSessionId = shallowRef('')
+const lastSubmittedMessage = shallowRef('')
 const isSidebarExpanded = shallowRef(true)
 const isMobileViewport = shallowRef(false)
 const isChatStreamOverflowing = shallowRef(false)
@@ -120,6 +121,7 @@ function clearConversation() {
   currentRequestId.value = ''
   currentModel.value = ''
   errorMessage.value = ''
+  lastSubmittedMessage.value = ''
   scheduleChatStreamMeasure()
   closeMobileSidebar()
 }
@@ -159,8 +161,8 @@ function handleClearSessions() {
   clearConversation()
 }
 
-async function sendMessage() {
-  const text = inputMessage.value.trim()
+async function sendMessage(messageOverride?: string) {
+  const text = (messageOverride ?? inputMessage.value).trim()
 
   if (!text || isLoading.value) {
     return
@@ -172,7 +174,10 @@ async function sendMessage() {
     role: 'user',
     content: text,
   })
-  inputMessage.value = ''
+  lastSubmittedMessage.value = text
+  if (!messageOverride) {
+    inputMessage.value = ''
+  }
   isLoading.value = true
   errorMessage.value = ''
 
@@ -195,15 +200,18 @@ async function sendMessage() {
   } catch (error) {
     const message = error instanceof Error ? error.message : '发送失败，请稍后重试'
     errorMessage.value = message
-    messages.value.push({
-      id: createMessageId(),
-      role: 'assistant',
-      content: `当前请求失败：${message}`,
-    })
   } finally {
     saveSession(activeSessionId.value || createSessionId(), messages.value)
     isLoading.value = false
   }
+}
+
+function retryLastMessage() {
+  if (!lastSubmittedMessage.value || isLoading.value) {
+    return
+  }
+
+  void sendMessage(lastSubmittedMessage.value)
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -473,11 +481,11 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
       />
 
       <template #footer>
-        <p class="sidebar-meta">
-          {{ currentModel || 'TokenHub Chat' }}
-        </p>
         <p v-if="currentRequestId" class="sidebar-request">
           Request ID: {{ currentRequestId }}
+        </p>
+        <p class="sidebar-meta">
+          {{ currentModel || 'TokenHub Chat' }}
         </p>
       </template>
     </AppSidebarShell>
@@ -557,6 +565,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
         <p v-if="errorMessage" class="composer-error">
           {{ errorMessage }}
         </p>
+        <button
+          v-if="errorMessage && lastSubmittedMessage && !isLoading"
+          class="composer-retry ui-button-reset"
+          type="button"
+          @click="retryLastMessage"
+        >
+          重新发送上一条
+        </button>
 
         <div class="composer-card">
           <textarea
@@ -633,6 +649,16 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 .welcome-description {
   font-size: 12px;
   line-height: 1.7;
+}
+
+.sidebar-request,
+.sidebar-meta {
+  width: 100%;
+  text-align: center;
+}
+
+.sidebar-meta {
+  margin-top: auto;
 }
 
 .welcome-kicker {
@@ -885,6 +911,20 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 .composer-error {
   margin-bottom: 10px;
   color: #b91c1c;
+}
+
+.composer-retry {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  margin-bottom: 10px;
+  padding: 0 12px;
+  border: 1px solid rgba(185, 28, 28, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .composer-card {

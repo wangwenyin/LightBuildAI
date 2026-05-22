@@ -4,6 +4,8 @@ type RecentRecordItem = {
   title: string
   subtitle?: string
   meta?: string
+  badge?: string
+  badgeTone?: 'neutral' | 'success' | 'warning' | 'error'
 }
 
 const props = withDefaults(defineProps<{
@@ -86,6 +88,13 @@ function handleClear(event: MouseEvent) {
       >
         <button class="recent-item-main" type="button" @click="emit('select', item.id)">
           <span class="recent-item-title">{{ item.title }}</span>
+          <span
+            v-if="item.badge"
+            class="recent-item-badge"
+            :class="`recent-item-badge--${item.badgeTone || 'neutral'}`"
+          >
+            {{ item.badge }}
+          </span>
           <span v-if="item.subtitle" class="recent-item-subtitle">{{ item.subtitle }}</span>
           <span v-if="item.meta" class="recent-item-meta">{{ item.meta }}</span>
         </button>
@@ -257,10 +266,10 @@ function handleClear(event: MouseEvent) {
   width: 100%;
   flex: 1;
   min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr);
   grid-template-areas:
-    "title subtitle"
-    ". meta";
+    "title badge subtitle"
+    ". meta meta";
   align-items: center;
   column-gap: 10px;
   row-gap: 2px;
@@ -334,6 +343,37 @@ function handleClear(event: MouseEvent) {
   overflow: hidden;
   text-overflow: ellipsis;
   opacity: 0.92;
+}
+
+.recent-item-badge {
+  grid-area: badge;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.06);
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.recent-item-badge--success {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+}
+
+.recent-item-badge--warning {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+.recent-item-badge--error {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
 }
 
 .recent-item-meta,

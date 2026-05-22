@@ -13,6 +13,34 @@ export type LocalImageHistoryRecord = {
 const IMAGE_HISTORY_STORAGE_KEY = 'lightbuild:image-history'
 const MAX_IMAGE_HISTORY = 20
 
+function normalizePersistedImageUrl(url: string) {
+  const normalized = url.trim()
+
+  if (!normalized) {
+    return ''
+  }
+
+  try {
+    const parsed = new URL(normalized)
+
+    if (/^\/uploads\//i.test(parsed.pathname)) {
+      return `${parsed.origin}${parsed.pathname}`
+    }
+
+    return normalized
+  } catch {
+    return normalized
+  }
+}
+
+function normalizeRecord(record: LocalImageHistoryRecord): LocalImageHistoryRecord {
+  return {
+    ...record,
+    sourceImageUrl: normalizePersistedImageUrl(record.sourceImageUrl),
+    resultImageUrl: normalizePersistedImageUrl(record.resultImageUrl),
+  }
+}
+
 function createRecordTitle(prompt: string, customTitle?: string) {
   const normalizedCustomTitle = customTitle?.replace(/\s+/g, ' ').trim()
 
@@ -35,7 +63,9 @@ export function useLocalImageHistory() {
     try {
       const raw = window.localStorage.getItem(IMAGE_HISTORY_STORAGE_KEY)
       const parsed = raw ? JSON.parse(raw) as LocalImageHistoryRecord[] : []
-      records.value = Array.isArray(parsed) ? parsed : []
+      const nextRecords = Array.isArray(parsed) ? parsed.map(normalizeRecord) : []
+      records.value = nextRecords
+      window.localStorage.setItem(IMAGE_HISTORY_STORAGE_KEY, JSON.stringify(nextRecords))
     } catch {
       records.value = []
     }
@@ -58,6 +88,8 @@ export function useLocalImageHistory() {
 
     const nextRecord: LocalImageHistoryRecord = {
       ...record,
+      sourceImageUrl: normalizePersistedImageUrl(record.sourceImageUrl),
+      resultImageUrl: normalizePersistedImageUrl(record.resultImageUrl),
       title: createRecordTitle(record.prompt, record.title),
       updatedAt: new Date().toISOString(),
     }

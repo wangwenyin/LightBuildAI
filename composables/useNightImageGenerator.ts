@@ -75,7 +75,7 @@ export function useNightImageGenerator() {
   const currentTaskId = shallowRef('')
   const activeView = shallowRef<'source' | 'result'>('source')
   const isLoading = shallowRef(false)
-  const canRetry = shallowRef(false)
+  const lastErrorMessage = shallowRef('')
 
   const hasSourceImage = computed(() => Boolean(sourcePreviewUrl.value))
   const hasResultImage = computed(() => Boolean(resultUrl.value))
@@ -88,6 +88,7 @@ export function useNightImageGenerator() {
 
     return sourcePreviewUrl.value
   })
+  const isFailed = computed(() => Boolean(lastErrorMessage.value))
   const statusVariant = computed(() => {
     if (!taskStatus.value) {
       return 'neutral'
@@ -102,6 +103,17 @@ export function useNightImageGenerator() {
     }
 
     return 'info'
+  })
+  const primaryActionLabel = computed(() => {
+    if (isLoading.value) {
+      return loadingText.value
+    }
+
+    if (isFailed.value) {
+      return '重新生成'
+    }
+
+    return hasResultImage.value ? '再次生成' : '开始生成'
   })
 
   watch(sourcePreviewUrl, (nextValue, previousValue) => {
@@ -135,13 +147,13 @@ export function useNightImageGenerator() {
     resultUrl.value = ''
     sourceFileHint.value = buildFileHint(selectedFile)
     taskStatus.value = ''
+    lastErrorMessage.value = ''
     currentTaskId.value = ''
     currentProvider.value = ''
     currentRequestId.value = ''
     currentSeed.value = null
     currentSize.value = ''
     revisedPrompt.value = ''
-    canRetry.value = false
     activeView.value = 'source'
   }
 
@@ -157,6 +169,7 @@ export function useNightImageGenerator() {
     resultUrl.value = ''
     customPrompt.value = ''
     taskStatus.value = ''
+    lastErrorMessage.value = ''
     currentTaskId.value = ''
     currentProvider.value = ''
     currentRequestId.value = ''
@@ -164,7 +177,6 @@ export function useNightImageGenerator() {
     currentSize.value = ''
     revisedPrompt.value = ''
     sourceFileHint.value = ''
-    canRetry.value = false
     activeView.value = 'source'
   }
 
@@ -182,6 +194,9 @@ export function useNightImageGenerator() {
     resultUrl.value = snapshot.resultImageUrl?.trim() || ''
     customPrompt.value = snapshot.prompt?.trim() || ''
     taskStatus.value = snapshot.status?.trim() || ''
+    lastErrorMessage.value = snapshot.status?.trim().startsWith('失败：')
+      ? snapshot.status.trim().replace(/^失败：/, '')
+      : ''
     currentTaskId.value = snapshot.taskId?.trim() || ''
     currentProvider.value = ''
     currentRequestId.value = ''
@@ -189,7 +204,6 @@ export function useNightImageGenerator() {
     currentSize.value = ''
     revisedPrompt.value = ''
     sourceFileHint.value = ''
-    canRetry.value = Boolean(resultUrl.value || sourcePreviewUrl.value)
     activeView.value = resultUrl.value ? 'result' : 'source'
   }
 
@@ -205,7 +219,7 @@ export function useNightImageGenerator() {
     currentSeed.value = null
     currentSize.value = ''
     revisedPrompt.value = ''
-    canRetry.value = false
+    lastErrorMessage.value = ''
     activeView.value = 'source'
 
     try {
@@ -279,17 +293,13 @@ export function useNightImageGenerator() {
       taskStatus.value = '生成完成'
     } catch (error) {
       const message = getErrorMessage(error)
+      lastErrorMessage.value = message
       taskStatus.value = `失败：${message}`
-      canRetry.value = true
       throw new Error(message)
     } finally {
       isLoading.value = false
       loadingText.value = '生成中...'
     }
-  }
-
-  async function retryGenerate() {
-    await generateNightImage()
   }
 
   async function copyTaskId() {
@@ -332,7 +342,6 @@ export function useNightImageGenerator() {
 
   return {
     activeView,
-    canRetry,
     copyTaskId,
     currentProvider,
     currentRequestId,
@@ -351,15 +360,17 @@ export function useNightImageGenerator() {
     historyResultImageUrl,
     historySourceImageUrl,
     isLoading,
+    isFailed,
+    lastErrorMessage,
     loadingText,
     onFileChange,
+    primaryActionLabel,
     resetGenerator,
     restoreHistorySnapshot,
     sourceFileHint,
     revisedPrompt,
     revisePrompt,
     resultUrl,
-    retryGenerate,
     setActiveView,
     sourcePreviewUrl,
     statusVariant,
@@ -557,7 +568,7 @@ async function pollTask(
       throw new Error(formatTaskError(task))
     }
 
-    taskStatus.value = `正在生成夜景，请稍候...（第 ${attempt + 1} / ${MAX_POLL_ATTEMPTS} 次查询）`
+    taskStatus.value = buildPollingStatus(attempt, MAX_POLL_ATTEMPTS)
   }
 
   throw new Error('等待生成结果超时，请稍后通过任务接口继续查询')
@@ -624,6 +635,24 @@ function buildSubmitStatus(params: {
   }
 
   return notices.join('；')
+}
+
+function buildPollingStatus(attempt: number, maxAttempts: number) {
+  const progress = (attempt + 1) / Math.max(maxAttempts, 1)
+
+  if (progress <= 0.2) {
+    return '正在分析参考图与提示词...'
+  }
+
+  if (progress <= 0.5) {
+    return '正在生成夜景主体画面...'
+  }
+
+  if (progress <= 0.8) {
+    return '正在优化灯光、材质与细节...'
+  }
+
+  return '正在整理结果并回传图片...'
 }
 
 function sleep(ms: number) {

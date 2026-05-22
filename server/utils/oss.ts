@@ -129,15 +129,39 @@ export function createSignedOSSUrl(
 }
 
 export function extractObjectKeyFromOSSUrl(url: string, config: OssRuntimeConfig = {}) {
-  const parsed = new URL(url)
-  const endpoint = normalizeEndpoint(config)
-  const expectedHost = config.ossBucket ? `${config.ossBucket}.${endpoint}` : ''
+  const normalizedDir = normalizeObjectDir(config.ossDir)
+  const normalizedInput = url.trim()
 
-  if (expectedHost && parsed.host !== expectedHost) {
+  if (!normalizedInput) {
     return null
   }
 
-  return decodeURIComponent(parsed.pathname.replace(/^\/+/, ''))
+  if (normalizedInput.startsWith('/')) {
+    const pathnameObjectKey = decodeURIComponent(normalizedInput.replace(/^\/+/, ''))
+
+    if (pathnameObjectKey.startsWith(`${normalizedDir}/`)) {
+      return pathnameObjectKey
+    }
+
+    return null
+  }
+
+  const parsed = new URL(normalizedInput)
+  const endpoint = normalizeEndpoint(config)
+  const expectedHost = config.ossBucket ? `${config.ossBucket}.${endpoint}` : ''
+  const normalizedPathname = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''))
+
+  if (expectedHost && parsed.host === expectedHost) {
+    return trimBucketPrefix(normalizedPathname, config.ossBucket)
+  }
+
+  const withoutBucketPrefix = trimBucketPrefix(normalizedPathname, config.ossBucket)
+
+  if (withoutBucketPrefix.startsWith(`${normalizedDir}/`)) {
+    return withoutBucketPrefix
+  }
+
+  return null
 }
 
 function hasOssConfig(config: OssRuntimeConfig) {
@@ -150,7 +174,7 @@ function hasOssConfig(config: OssRuntimeConfig) {
 }
 
 function buildObjectName(filename: string, dir = 'uploads') {
-  const normalizedDir = dir.replace(/^\/+|\/+$/g, '') || 'uploads'
+  const normalizedDir = normalizeObjectDir(dir)
   const safeName = sanitizeFilename(filename)
   const date = new Date().toISOString().slice(0, 10)
 
@@ -173,6 +197,21 @@ function normalizeEndpoint(config: OssRuntimeConfig) {
   }
 
   return `${config.ossRegion}.aliyuncs.com`
+}
+
+function normalizeObjectDir(dir?: string) {
+  return dir?.replace(/^\/+|\/+$/g, '') || 'uploads'
+}
+
+function trimBucketPrefix(pathname: string, bucket?: string) {
+  if (!bucket) {
+    return pathname
+  }
+
+  const normalizedBucketPrefix = `${bucket}/`
+  return pathname.startsWith(normalizedBucketPrefix)
+    ? pathname.slice(normalizedBucketPrefix.length)
+    : pathname
 }
 
 function createOssSignature({

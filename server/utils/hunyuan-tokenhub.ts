@@ -7,6 +7,7 @@ import {
   type QueryNightImageJobResult,
   type SubmitNightImageJobResult,
 } from './hunyuan-shared'
+import { downloadOSSObject } from './oss'
 
 const MAX_REFERENCE_IMAGE_BYTES = 1024 * 1024
 const TOKENHUB_SUBMIT_URL = 'https://tokenhub.tencentmaas.com/v1/api/image/submit'
@@ -15,6 +16,7 @@ const TOKENHUB_MODEL = 'hy-image-v3.0'
 
 export async function submitTokenHubReferenceImageJob({
   originalUrl,
+  originalObjectKey,
   prompt,
   negativePrompt,
   revise,
@@ -22,8 +24,14 @@ export async function submitTokenHubReferenceImageJob({
   publicOrigin,
   imageWidth,
   imageHeight,
+  ossRegion,
+  ossAccessKeyId,
+  ossAccessKeySecret,
+  ossBucket,
+  ossEndpoint,
 }: {
   originalUrl: string
+  originalObjectKey?: string
   prompt: string
   negativePrompt?: string
   revise?: boolean
@@ -31,8 +39,21 @@ export async function submitTokenHubReferenceImageJob({
   publicOrigin?: string
   imageWidth?: number
   imageHeight?: number
+  ossRegion?: string
+  ossAccessKeyId?: string
+  ossAccessKeySecret?: string
+  ossBucket?: string
+  ossEndpoint?: string
 }): Promise<SubmitNightImageJobResult> {
-  const image = await createTokenHubImageInput(originalUrl, publicOrigin)
+  const image = await createTokenHubImageInput(originalUrl, {
+    publicOrigin,
+    originalObjectKey,
+    ossRegion,
+    ossAccessKeyId,
+    ossAccessKeySecret,
+    ossBucket,
+    ossEndpoint,
+  })
   const resolution = buildTokenHubResolution(imageWidth, imageHeight)
   const seed = createSeed()
   const payload = {
@@ -65,19 +86,41 @@ export async function submitTokenHubReferenceImageJob({
   }
 
   const taskId = readTokenHubTaskId(data)
+  const imageUrl = readTokenHubImageUrl(data)
+  const status = readTokenHubTaskStatus(data)
+  const requestId = readTokenHubRequestId(data)
 
-  if (!taskId) {
-    throw new Error('TokenHub 未返回任务 ID')
+  if (taskId) {
+    return {
+      jobId: `tokenhub:${taskId}`,
+      imageUrl: undefined,
+      requestId,
+      provider: 'tokenhub-reference-image' as const,
+      seed,
+      size: resolution,
+    }
   }
 
-  return {
-    jobId: `tokenhub:${taskId}`,
-    imageUrl: undefined,
-    requestId: readTokenHubRequestId(data),
-    provider: 'tokenhub-reference-image' as const,
-    seed,
-    size: resolution,
+  // Some submit responses may complete synchronously and return the final image directly.
+  if (imageUrl) {
+    return {
+      jobId: `tokenhub:completed:${requestId || createSeed()}`,
+      imageUrl,
+      requestId,
+      provider: 'tokenhub-reference-image' as const,
+      seed,
+      size: resolution,
+    }
   }
+
+  const submitErrorMessage = extractTokenHubErrorMessage(data, 'TokenHub 提交任务失败')
+  const details = [
+    `TokenHub 未返回任务 ID，状态：${status || 'unknown'}`,
+    submitErrorMessage,
+    requestId ? `请求 ID：${requestId}` : '',
+  ].filter(Boolean)
+
+  throw new Error(details.join('；'))
 }
 
 export async function queryTokenHubImageJob(taskId: string, tokenHubApiKey?: string): Promise<QueryNightImageJobResult> {
@@ -142,16 +185,36 @@ export async function queryTokenHubImageJob(taskId: string, tokenHubApiKey?: str
   }
 }
 
-async function createTokenHubImageInput(originalUrl: string, publicOrigin?: string) {
+async function createTokenHubImageInput(originalUrl: string, options: {
+  publicOrigin?: string
+  originalObjectKey?: string
+  ossRegion?: string
+  ossAccessKeyId?: string
+  ossAccessKeySecret?: string
+  ossBucket?: string
+  ossEndpoint?: string
+}) {
   if (isImageDataUrl(originalUrl)) {
     return originalUrl
+  }
+
+  if (options.originalObjectKey && options.ossBucket) {
+    const { buffer, contentType } = await downloadOSSObject(options.originalObjectKey, {
+      ossRegion: options.ossRegion,
+      ossAccessKeyId: options.ossAccessKeyId,
+      ossAccessKeySecret: options.ossAccessKeySecret,
+      ossBucket: options.ossBucket,
+      ossEndpoint: options.ossEndpoint,
+    })
+
+    return `data:${normalizeTokenHubMimeType(contentType)};base64,${buffer.toString('base64')}`
   }
 
   if (isHttpUrl(originalUrl)) {
     return originalUrl
   }
 
-  const absoluteUrl = resolveTokenHubImageUrl(originalUrl, publicOrigin)
+  const absoluteUrl = resolveTokenHubImageUrl(originalUrl, options.publicOrigin)
 
   if (absoluteUrl) {
     return absoluteUrl
@@ -272,6 +335,16 @@ function detectImageMimeType(filePath: string) {
 
   if (normalized.endsWith('.webp')) {
     return 'image/webp'
+  }
+
+  return 'image/jpeg'
+}
+
+function normalizeTokenHubMimeType(contentType: string) {
+  const normalized = contentType.split(';')[0]?.trim().toLowerCase()
+
+  if (normalized === 'image/png' || normalized === 'image/webp') {
+    return normalized
   }
 
   return 'image/jpeg'

@@ -65,6 +65,81 @@ export async function uploadOSS(buffer: Buffer, filename: string, config: OssRun
   return `/${['uploads', ...normalizedRelativePath].map(segment => encodeURIComponent(segment)).join('/')}`
 }
 
+export async function downloadOSSObject(objectKey: string, config: OssRuntimeConfig = {}) {
+  if (!hasOssConfig(config)) {
+    throw new Error('缺少 OSS 配置，无法读取私有对象')
+  }
+
+  const normalizedObjectKey = objectKey.replace(/^\/+/, '')
+  const contentType = config.contentType || ''
+  const date = new Date().toUTCString()
+  const endpoint = normalizeEndpoint(config)
+  const resource = `/${config.ossBucket}/${normalizedObjectKey}`
+  const signature = createOssSignature({
+    method: 'GET',
+    contentType,
+    date,
+    resource,
+    accessKeySecret: config.ossAccessKeySecret!,
+  })
+  const url = `https://${config.ossBucket}.${endpoint}/${encodeObjectPath(normalizedObjectKey)}`
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `OSS ${config.ossAccessKeyId}:${signature}`,
+      Date: date,
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`OSS 读取失败：${response.status} ${await response.text()}`)
+  }
+
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get('content-type') || detectContentType(normalizedObjectKey),
+  }
+}
+
+export function createSignedOSSUrl(
+  objectKey: string,
+  config: OssRuntimeConfig = {},
+  expiresInSeconds = 3600,
+) {
+  if (!hasOssConfig(config)) {
+    throw new Error('缺少 OSS 配置，无法生成签名地址')
+  }
+
+  const normalizedObjectKey = objectKey.replace(/^\/+/, '')
+  const endpoint = normalizeEndpoint(config)
+  const expires = Math.floor(Date.now() / 1000) + expiresInSeconds
+  const resource = `/${config.ossBucket}/${normalizedObjectKey}`
+  const signature = createOssSignature({
+    method: 'GET',
+    contentType: '',
+    date: String(expires),
+    resource,
+    accessKeySecret: config.ossAccessKeySecret!,
+  })
+  const url = new URL(`https://${config.ossBucket}.${endpoint}/${encodeObjectPath(normalizedObjectKey)}`)
+  url.searchParams.set('OSSAccessKeyId', config.ossAccessKeyId!)
+  url.searchParams.set('Expires', String(expires))
+  url.searchParams.set('Signature', signature)
+  return url.toString()
+}
+
+export function extractObjectKeyFromOSSUrl(url: string, config: OssRuntimeConfig = {}) {
+  const parsed = new URL(url)
+  const endpoint = normalizeEndpoint(config)
+  const expectedHost = config.ossBucket ? `${config.ossBucket}.${endpoint}` : ''
+
+  if (expectedHost && parsed.host !== expectedHost) {
+    return null
+  }
+
+  return decodeURIComponent(parsed.pathname.replace(/^\/+/, ''))
+}
+
 function hasOssConfig(config: OssRuntimeConfig) {
   return Boolean(
     config.ossRegion

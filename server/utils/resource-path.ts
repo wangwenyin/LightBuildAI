@@ -15,7 +15,7 @@ export function buildSourceObjectKey({
 }) {
   const normalizedBaseDir = trimSlashes(baseDir) || 'uploads'
   const normalizedSessionId = sanitizePathSegment(sessionId) || 'anonymous'
-  const safeName = sanitizeFilename(filename)
+  const safeName = createSafeAssetFilename(filename)
 
   return {
     objectKey: `${normalizedBaseDir}/source/${date}/${normalizedSessionId}/${requestId}-${safeName}`,
@@ -58,6 +58,16 @@ function sanitizeFilename(filename: string) {
     .replace(/\s+/g, '-')
     .replace(/[^\w.\-\u4e00-\u9fa5]/g, '')
     || 'upload.jpg'
+}
+
+function createSafeAssetFilename(filename: string) {
+  const extension = readFileExtension(filename)
+  return extension ? `upload.${extension}` : 'upload.jpg'
+}
+
+function readFileExtension(filename: string) {
+  const matched = filename.toLowerCase().match(/\.([a-z0-9]+)$/)
+  return matched?.[1]
 }
 
 function sanitizePathSegment(value: string) {

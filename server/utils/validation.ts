@@ -22,6 +22,7 @@ export type ValidatedChatMessage = {
 export type ValidatedGenerateBody = {
   sessionId?: string
   originalUrl?: string
+  originalObjectKey?: string
   originalImageWidth?: number
   originalImageHeight?: number
   imageWidth?: number
@@ -81,6 +82,11 @@ export function validateGenerateRequestBody(body: unknown): ValidatedGenerateBod
     maxLength: 2048,
     trim: true,
   })
+  const originalObjectKey = normalizeOptionalString(normalizedBody.originalObjectKey, {
+    fieldName: 'originalObjectKey',
+    maxLength: 2048,
+    trim: true,
+  })
   const originalImageWidth = normalizeOptionalInteger(normalizedBody.originalImageWidth, 'originalImageWidth')
   const originalImageHeight = normalizeOptionalInteger(normalizedBody.originalImageHeight, 'originalImageHeight')
   const imageWidth = normalizeOptionalInteger(normalizedBody.imageWidth, 'imageWidth')
@@ -108,6 +114,7 @@ export function validateGenerateRequestBody(body: unknown): ValidatedGenerateBod
   return {
     sessionId,
     originalUrl,
+    originalObjectKey,
     originalImageWidth,
     originalImageHeight,
     imageWidth: ensureDimensionRange(imageWidth, 'imageWidth'),

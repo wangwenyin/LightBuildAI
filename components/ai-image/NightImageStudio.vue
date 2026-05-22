@@ -207,7 +207,7 @@ function formatRelativeTime(value: string) {
   }).format(date)
 }
 
-function openHistory(recordId: string) {
+async function openHistory(recordId: string) {
   const record = getRecord(recordId)
 
   if (!record) {
@@ -223,6 +223,8 @@ function openHistory(recordId: string) {
     status: record.status,
     taskId: record.taskId,
   })
+
+  await refreshHistoryAssetUrls(record)
   closeMobileSidebar()
 }
 
@@ -260,6 +262,75 @@ function setupMobileViewportWatcher() {
   isMobileViewport.value = mobileViewportQuery.matches
   isMobileSidebarOpen.value = false
   bindViewportListener(mobileViewportQuery, handleMobileViewportChange)
+}
+
+async function refreshHistoryAssetUrls(record: {
+  id: string
+  sessionId?: string
+  taskId?: string
+  prompt: string
+  sourceImageUrl: string
+  resultImageUrl: string
+  status: string
+}) {
+  let nextSourceImageUrl = record.sourceImageUrl
+  let nextResultImageUrl = record.resultImageUrl
+
+  try {
+    if (record.sourceImageUrl && isPrivateOssUrl(record.sourceImageUrl)) {
+      const source = await $fetch<{ url: string }>('/api/resource/sign', {
+        query: { url: record.sourceImageUrl },
+      })
+
+      nextSourceImageUrl = source.url
+    }
+
+    if (record.taskId) {
+      const task = await $fetch<{
+        status: 'processing' | 'done' | 'failed'
+        imageUrl?: string
+      }>('/api/task', {
+        query: {
+          taskId: record.taskId,
+          ...(record.sessionId ? { sessionId: record.sessionId } : {}),
+        },
+      })
+
+      if (task.imageUrl) {
+        nextResultImageUrl = task.imageUrl
+      }
+    } else if (record.resultImageUrl && isPrivateOssUrl(record.resultImageUrl)) {
+      const result = await $fetch<{ url: string }>('/api/resource/sign', {
+        query: { url: record.resultImageUrl },
+      })
+
+      nextResultImageUrl = result.url
+    }
+
+    restoreHistorySnapshot({
+      sourceImageUrl: nextSourceImageUrl,
+      resultImageUrl: nextResultImageUrl,
+      prompt: record.prompt,
+      status: record.status,
+      taskId: record.taskId,
+    })
+
+    saveRecord({
+      id: record.id,
+      sessionId: record.sessionId,
+      taskId: record.taskId,
+      prompt: record.prompt,
+      sourceImageUrl: record.sourceImageUrl,
+      resultImageUrl: nextResultImageUrl || record.resultImageUrl,
+      status: record.status,
+    })
+  } catch {
+    // 历史记录保底回退到原始快照，不阻断用户查看已有信息。
+  }
+}
+
+function isPrivateOssUrl(url: string) {
+  return /^https:\/\/[^/]+\.aliyuncs\.com\/uploads\//i.test(url) && !url.includes('OSSAccessKeyId=')
 }
 
 function handleMobileViewportChange(event: MediaQueryListEvent) {

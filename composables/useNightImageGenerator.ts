@@ -14,6 +14,13 @@ type GenerateResponse = {
   }
 }
 
+type UploadResponse = {
+  url: string
+  objectKey?: string
+  requestId?: string
+  sessionId?: string
+}
+
 type TaskResponse = {
   taskId: string
   status: 'processing' | 'done' | 'failed'
@@ -50,6 +57,7 @@ export function useNightImageGenerator() {
   const { ensureSessionId, sessionId } = useClientSession()
   const sourceFile = shallowRef<File | null>(null)
   const sourceRemoteUrl = shallowRef('')
+  const sourceRemoteObjectKey = shallowRef('')
   const sourcePreviewUrl = shallowRef('')
   const resultUrl = shallowRef('')
   const currentProvider = shallowRef<'hunyuan-text-to-image' | 'tokenhub-reference-image' | ''>('')
@@ -122,6 +130,7 @@ export function useNightImageGenerator() {
 
     sourceFile.value = selectedFile
     sourceRemoteUrl.value = ''
+    sourceRemoteObjectKey.value = ''
     sourcePreviewUrl.value = URL.createObjectURL(selectedFile)
     resultUrl.value = ''
     sourceFileHint.value = buildFileHint(selectedFile)
@@ -143,6 +152,7 @@ export function useNightImageGenerator() {
   function resetGenerator() {
     sourceFile.value = null
     sourceRemoteUrl.value = ''
+    sourceRemoteObjectKey.value = ''
     sourcePreviewUrl.value = ''
     resultUrl.value = ''
     customPrompt.value = ''
@@ -167,6 +177,7 @@ export function useNightImageGenerator() {
   }) {
     sourceFile.value = null
     sourceRemoteUrl.value = snapshot.sourceImageUrl?.trim() || ''
+    sourceRemoteObjectKey.value = ''
     sourcePreviewUrl.value = snapshot.sourceImageUrl?.trim() || ''
     resultUrl.value = snapshot.resultImageUrl?.trim() || ''
     customPrompt.value = snapshot.prompt?.trim() || ''
@@ -213,13 +224,14 @@ export function useNightImageGenerator() {
         form.append('file', preparedFileMeta.file)
         form.append('sessionId', activeSessionId)
 
-        const uploadResponse = await $fetch<{ url: string, requestId?: string }>('/api/upload', {
+        const uploadResponse = await $fetch<UploadResponse>('/api/upload', {
           method: 'POST',
           body: form,
         })
 
         originalUrl = uploadResponse.url
         sourceRemoteUrl.value = uploadResponse.url
+        sourceRemoteObjectKey.value = uploadResponse.objectKey ?? ''
         currentRequestId.value = uploadResponse.requestId ?? ''
       }
 
@@ -231,6 +243,7 @@ export function useNightImageGenerator() {
         body: {
           sessionId: activeSessionId,
           ...(originalUrl ? { originalUrl } : {}),
+          ...(sourceRemoteObjectKey.value ? { originalObjectKey: sourceRemoteObjectKey.value } : {}),
           ...(preparedFileMeta ? {
             originalImageWidth: originalImageDimensions?.width,
             originalImageHeight: originalImageDimensions?.height,

@@ -13,12 +13,18 @@ export type HunyuanCredentials = {
 
 export type SubmitNightImageJobParams = HunyuanCredentials & {
   originalUrl?: string
+  originalObjectKey?: string
   prompt: string
   negativePrompt?: string
   revise?: boolean
   publicOrigin?: string
   imageWidth?: number
   imageHeight?: number
+  ossRegion?: string
+  ossAccessKeyId?: string
+  ossAccessKeySecret?: string
+  ossBucket?: string
+  ossEndpoint?: string
 }
 
 export type NightImageProvider =

@@ -1,4 +1,5 @@
 import { queryNightImageJob } from '../utils/hunyuan'
+import { createSignedOSSUrl, extractObjectKeyFromOSSUrl } from '../utils/oss'
 import { persistGeneratedImage } from '../utils/result-image'
 import { validateSessionId } from '../utils/validation'
 
@@ -40,11 +41,20 @@ export default defineEventHandler(async (event) => {
       : result.status === 'done'
         ? result.imageUrl
         : undefined
+    const signedImageUrl = imageUrl
+      ? signResultImageUrl(imageUrl, {
+          ossRegion: config.ossRegion,
+          ossAccessKeyId: config.ossAccessKeyId,
+          ossAccessKeySecret: config.ossAccessKeySecret,
+          ossBucket: config.ossBucket,
+          ossEndpoint: config.ossEndpoint,
+        })
+      : undefined
 
     return {
       taskId: normalizedTaskId,
       ...result,
-      ...(imageUrl ? { imageUrl } : {}),
+      ...(signedImageUrl ? { imageUrl: signedImageUrl } : imageUrl ? { imageUrl } : {}),
     }
   } catch (error) {
     console.error('读取任务状态失败', error)
@@ -89,3 +99,23 @@ export default defineEventHandler(async (event) => {
     })
   }
 })
+
+function signResultImageUrl(imageUrl: string, config: {
+  ossRegion?: string
+  ossAccessKeyId?: string
+  ossAccessKeySecret?: string
+  ossBucket?: string
+  ossEndpoint?: string
+}) {
+  try {
+    const objectKey = extractObjectKeyFromOSSUrl(imageUrl, config)
+
+    if (!objectKey) {
+      return imageUrl
+    }
+
+    return createSignedOSSUrl(objectKey, config, 3600)
+  } catch {
+    return imageUrl
+  }
+}

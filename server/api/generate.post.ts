@@ -18,6 +18,7 @@ export default defineEventHandler(async (event) => {
   const {
     sessionId,
     originalUrl,
+    originalObjectKey,
     originalImageWidth,
     originalImageHeight,
     imageWidth,
@@ -41,6 +42,7 @@ export default defineEventHandler(async (event) => {
 
   const result = await submitNightImageJob({
     originalUrl: normalizedOriginalUrl,
+    originalObjectKey,
     prompt,
     negativePrompt,
     revise,
@@ -51,6 +53,11 @@ export default defineEventHandler(async (event) => {
     region: config.tencentcloudRegion,
     tokenHubApiKey: config.tokenHubImageApiKey,
     publicOrigin: getRequestURL(event).origin,
+    ossRegion: config.ossRegion,
+    ossAccessKeyId: config.ossAccessKeyId,
+    ossAccessKeySecret: config.ossAccessKeySecret,
+    ossBucket: config.ossBucket,
+    ossEndpoint: config.ossEndpoint,
   })
 
   return {

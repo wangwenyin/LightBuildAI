@@ -9,6 +9,7 @@ import { submitTokenHubReferenceImageJob, queryTokenHubImageJob } from './hunyua
 
 export async function submitNightImageJob({
   originalUrl,
+  originalObjectKey,
   prompt,
   negativePrompt,
   revise,
@@ -19,6 +20,11 @@ export async function submitNightImageJob({
   publicOrigin,
   imageWidth,
   imageHeight,
+  ossRegion,
+  ossAccessKeyId,
+  ossAccessKeySecret,
+  ossBucket,
+  ossEndpoint,
 }: SubmitNightImageJobParams): Promise<SubmitNightImageJobResult> {
   if (originalUrl) {
     if (!tokenHubApiKey) {
@@ -27,6 +33,7 @@ export async function submitNightImageJob({
 
     return submitTokenHubReferenceImageJob({
       originalUrl,
+      originalObjectKey,
       prompt,
       negativePrompt,
       revise,
@@ -34,6 +41,11 @@ export async function submitNightImageJob({
       publicOrigin,
       imageWidth,
       imageHeight,
+      ossRegion,
+      ossAccessKeyId,
+      ossAccessKeySecret,
+      ossBucket,
+      ossEndpoint,
     })
   }
 

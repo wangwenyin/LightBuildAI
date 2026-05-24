@@ -45,11 +45,13 @@ const currentModel = shallowRef('')
 const currentRequestId = shallowRef('')
 const messages = ref<ChatMessage[]>([])
 const messageListRef = shallowRef<HTMLDivElement | null>(null)
+const composerInputRef = shallowRef<HTMLTextAreaElement | null>(null)
 const activeSessionId = shallowRef('')
 const lastSubmittedMessage = shallowRef('')
 const isSidebarExpanded = shallowRef(true)
 const isMobileViewport = shallowRef(false)
 const isChatStreamOverflowing = shallowRef(false)
+const isComposing = shallowRef(false)
 let chatStreamResizeObserver: ResizeObserver | null = null
 let chatStreamMutationObserver: MutationObserver | null = null
 let mobileViewportQuery: MediaQueryList | null = null
@@ -162,7 +164,8 @@ function handleClearSessions() {
 }
 
 async function sendMessage(messageOverride?: string) {
-  const text = (messageOverride ?? inputMessage.value).trim()
+  const liveInputValue = composerInputRef.value?.value ?? inputMessage.value
+  const text = (messageOverride ?? liveInputValue).trim()
 
   if (!text || isLoading.value) {
     return
@@ -215,10 +218,18 @@ function retryLastMessage() {
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' && !event.shiftKey) {
+  if (event.key === 'Enter' && !event.shiftKey && !isComposing.value) {
     event.preventDefault()
     void sendMessage()
   }
+}
+
+function handleSubmit() {
+  if (isComposing.value) {
+    return
+  }
+
+  void sendMessage()
 }
 
 function createMessageId() {
@@ -561,7 +572,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
         </div>
       </div>
 
-      <div class="composer-shell">
+      <form class="composer-shell" @submit.prevent="handleSubmit">
         <p v-if="errorMessage" class="composer-error">
           {{ errorMessage }}
         </p>
@@ -576,11 +587,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 
         <div class="composer-card">
           <textarea
+            ref="composerInputRef"
             v-model="inputMessage"
             class="composer-input"
             rows="1"
             placeholder="给 LightBuild AI 发送消息"
             @keydown="handleKeydown"
+            @compositionstart="isComposing = true"
+            @compositionend="isComposing = false"
           />
 
           <div class="composer-footer">
@@ -590,15 +604,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 
             <button
               class="send-button ui-button-reset ui-interactive-lift ui-disabled"
-              type="button"
+              type="submit"
               :disabled="!canSend"
-              @click="sendMessage"
             >
               {{ isLoading ? '发送中...' : '发送' }}
             </button>
           </div>
         </div>
-      </div>
+      </form>
     </main>
   </section>
 </template>

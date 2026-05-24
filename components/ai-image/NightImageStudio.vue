@@ -359,7 +359,7 @@ function normalizeHistoryAssetUrl(url: string) {
     const parsed = new URL(normalized)
 
     if (/^\/uploads\//i.test(parsed.pathname)) {
-      return `${parsed.origin}${parsed.pathname}`
+      return parsed.pathname
     }
 
     return normalized

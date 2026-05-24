@@ -35,35 +35,50 @@ export async function createTokenHubChatCompletion({
       content: item.content.trim(),
     }))
 
-  const response = await fetch(TOKENHUB_CHAT_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        ...normalizedHistory,
-        {
-          role: 'user',
-          content: message.trim(),
-        },
-      ],
-      stream: false,
-    }),
-  })
+  let response: Response
 
-  const data = await parseJsonResponse(response)
+  try {
+    response = await fetch(TOKENHUB_CHAT_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          ...normalizedHistory,
+          {
+            role: 'user',
+            content: message.trim(),
+          },
+        ],
+        stream: false,
+      }),
+    })
+  } catch {
+    throw createUpstreamError(502, 'TokenHub 聊天服务暂时不可用，请稍后重试')
+  }
+
+  let data: any
+
+  try {
+    data = await parseJsonResponse(response)
+  } catch {
+    throw createUpstreamError(502, 'TokenHub 聊天服务返回了无法解析的响应')
+  }
 
   if (!response.ok) {
-    throw createUpstreamError(response.status, extractTokenHubChatErrorMessage(data, 'TokenHub 聊天接口调用失败'))
+    throw createUpstreamError(
+      response.status >= 500 ? 502 : response.status,
+      extractTokenHubChatErrorMessage(data, 'TokenHub 聊天服务调用失败'),
+    )
   }
 
   const reply = extractReplyText(data)
 
   if (!reply) {
-    throw new Error('TokenHub 聊天接口未返回有效回复')
+    throw createUpstreamError(502, 'TokenHub 聊天服务未返回有效回复')
   }
 
   return {

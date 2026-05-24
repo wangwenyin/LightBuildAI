@@ -676,6 +676,11 @@ function getPersistableImageUrl(url: string) {
 
   try {
     const parsed = new URL(normalized)
+
+    if (/^\/uploads\//i.test(parsed.pathname)) {
+      return parsed.pathname
+    }
+
     return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? normalized : ''
   } catch {
     return ''

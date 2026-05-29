@@ -94,14 +94,6 @@ watch(
 onMounted(() => {
   setupMobileViewportWatcher()
   loadSessions()
-
-  const latestSession = getLatestSession()
-
-  if (latestSession) {
-    openSession(latestSession.id)
-    return
-  }
-
   activeSessionId.value = createSessionId()
 
   nextTick(() => {

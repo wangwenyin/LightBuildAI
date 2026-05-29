@@ -102,14 +102,7 @@ onMounted(() => {
   setupMobileViewportWatcher()
   setupPromptShellObserver()
   loadRecords()
-
-  const latestRecord = getLatestRecord()
-
-  if (latestRecord) {
-    openHistory(latestRecord.id)
-  } else {
-    draftHistoryId.value = createHistoryId()
-  }
+  draftHistoryId.value = createHistoryId()
 })
 
 watch(

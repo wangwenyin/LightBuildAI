@@ -186,6 +186,9 @@ export function useNightImageGenerator() {
     prompt?: string
     status?: string
     taskId?: string
+    activeView?: 'source' | 'result'
+    errorMessage?: string
+    loadingText?: string
   }) {
     sourceFile.value = null
     sourceRemoteUrl.value = snapshot.sourceImageUrl?.trim() || ''
@@ -194,9 +197,10 @@ export function useNightImageGenerator() {
     resultUrl.value = snapshot.resultImageUrl?.trim() || ''
     customPrompt.value = snapshot.prompt?.trim() || ''
     taskStatus.value = snapshot.status?.trim() || ''
-    lastErrorMessage.value = snapshot.status?.trim().startsWith('失败：')
-      ? snapshot.status.trim().replace(/^失败：/, '')
-      : ''
+    lastErrorMessage.value = snapshot.errorMessage?.trim()
+      || (snapshot.status?.trim().startsWith('失败：')
+        ? snapshot.status.trim().replace(/^失败：/, '')
+        : '')
     currentTaskId.value = snapshot.taskId?.trim() || ''
     currentProvider.value = ''
     currentRequestId.value = ''
@@ -204,7 +208,63 @@ export function useNightImageGenerator() {
     currentSize.value = ''
     revisedPrompt.value = ''
     sourceFileHint.value = ''
-    activeView.value = resultUrl.value ? 'result' : 'source'
+    loadingText.value = snapshot.loadingText?.trim() || '生成中...'
+    activeView.value = snapshot.activeView || (resultUrl.value ? 'result' : 'source')
+  }
+
+  async function resumePendingTask(taskId: string, persistedSessionId?: string) {
+    const normalizedTaskId = taskId.trim()
+    const normalizedSessionId = persistedSessionId?.trim() || sessionId.value || ensureSessionId()
+
+    if (!normalizedTaskId || !normalizedSessionId) {
+      return
+    }
+
+    isLoading.value = true
+    currentTaskId.value = normalizedTaskId
+    loadingText.value = '正在恢复生成进度...'
+    lastErrorMessage.value = ''
+
+    try {
+      const task = await $fetch<TaskResponse>('/api/task', {
+        query: {
+          taskId: normalizedTaskId,
+          sessionId: normalizedSessionId,
+        },
+      })
+
+      if (task.revisedPrompt) {
+        revisedPrompt.value = task.revisedPrompt
+      }
+
+      if (task.status === 'done' && task.imageUrl) {
+        resultUrl.value = task.imageUrl
+        activeView.value = 'result'
+        taskStatus.value = '生成完成'
+        return
+      }
+
+      if (task.status === 'failed') {
+        throw new Error(formatTaskError(task))
+      }
+
+      taskStatus.value = buildSubmitStatus({
+        taskId: normalizedTaskId,
+        hasReferenceImage: Boolean(sourceRemoteUrl.value || sourcePreviewUrl.value),
+        reviseRequested: revisePrompt.value,
+      })
+      loadingText.value = '生成中...'
+      resultUrl.value = await pollTask(normalizedTaskId, normalizedSessionId, taskStatus, revisedPrompt)
+      activeView.value = 'result'
+      taskStatus.value = '生成完成'
+    } catch (error) {
+      const message = getErrorMessage(error)
+      lastErrorMessage.value = message
+      taskStatus.value = `失败：${message}`
+    } finally {
+      isLoading.value = false
+      loadingText.value = '生成中...'
+    }
   }
 
   async function generateNightImage() {
@@ -366,6 +426,7 @@ export function useNightImageGenerator() {
     onFileChange,
     primaryActionLabel,
     resetGenerator,
+    resumePendingTask,
     restoreHistorySnapshot,
     sourceFileHint,
     revisedPrompt,

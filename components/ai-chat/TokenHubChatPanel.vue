@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import AppSidebarShell from '~/components/shared/AppSidebarShell.vue'
 import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
+import { useLocalChatDraft } from '~/composables/useLocalChatDraft'
+import { usePendingReloadResume } from '~/composables/usePendingReloadResume'
 import { useLocalChatHistory } from '~/composables/useLocalChatHistory'
 
 const props = withDefaults(defineProps<{
@@ -56,6 +58,8 @@ let chatStreamResizeObserver: ResizeObserver | null = null
 let chatStreamMutationObserver: MutationObserver | null = null
 let mobileViewportQuery: MediaQueryList | null = null
 const { clearSessions, deleteSession, getLatestSession, getSession, loadSessions, saveSession, sessions } = useLocalChatHistory()
+const { clearDraft, loadDraft, saveDraft } = useLocalChatDraft()
+const { clearPendingReload, consumePendingReload, markPendingReload } = usePendingReloadResume('chat')
 
 const canSend = computed(() => Boolean(inputMessage.value.trim()) && !isLoading.value)
 const hasConversation = computed(() => messages.value.length > 0)
@@ -94,7 +98,14 @@ watch(
 onMounted(() => {
   setupMobileViewportWatcher()
   loadSessions()
-  activeSessionId.value = createSessionId()
+  bindBeforeUnload()
+
+  if (consumePendingReload()) {
+    restoreChatDraft()
+  } else {
+    clearDraft()
+    activeSessionId.value = createSessionId()
+  }
 
   nextTick(() => {
     setupChatStreamObservers()
@@ -105,9 +116,27 @@ onMounted(() => {
 onBeforeUnmount(() => {
   chatStreamResizeObserver?.disconnect()
   chatStreamMutationObserver?.disconnect()
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   window.removeEventListener('resize', scheduleChatStreamMeasure)
   unbindViewportListener(mobileViewportQuery, handleMobileViewportChange)
 })
+
+watch(
+  () => [
+    activeSessionId.value,
+    currentModel.value,
+    currentRequestId.value,
+    errorMessage.value,
+    inputMessage.value,
+    isLoading.value,
+    lastSubmittedMessage.value,
+    messages.value,
+  ],
+  () => {
+    persistChatDraft()
+  },
+  { deep: true },
+)
 
 function clearConversation() {
   activeSessionId.value = createSessionId()
@@ -115,7 +144,10 @@ function clearConversation() {
   currentRequestId.value = ''
   currentModel.value = ''
   errorMessage.value = ''
+  inputMessage.value = ''
   lastSubmittedMessage.value = ''
+  clearDraft()
+  clearPendingReload()
   scheduleChatStreamMeasure()
   closeMobileSidebar()
 }
@@ -175,6 +207,7 @@ async function sendMessage(messageOverride?: string) {
   }
   isLoading.value = true
   errorMessage.value = ''
+  saveSession(activeSessionId.value || createSessionId(), messages.value)
 
   try {
     const response = await $fetch<ChatResponse>('/api/chat', {
@@ -241,12 +274,85 @@ function openSession(sessionId: string) {
 
   activeSessionId.value = session.id
   messages.value = session.messages.map(message => ({ ...message }))
+  inputMessage.value = ''
+  currentModel.value = ''
+  currentRequestId.value = ''
   errorMessage.value = ''
+  isLoading.value = false
+  lastSubmittedMessage.value = ''
   closeMobileSidebar()
   nextTick(() => {
     setupChatStreamObservers()
     updateChatStreamOverflow()
   })
+}
+
+function restoreChatDraft() {
+  const draft = loadDraft()
+
+  if (!draft) {
+    activeSessionId.value = createSessionId()
+    return
+  }
+
+  activeSessionId.value = draft.activeSessionId || createSessionId()
+  currentModel.value = draft.currentModel
+  currentRequestId.value = draft.currentRequestId
+  inputMessage.value = draft.inputMessage
+  lastSubmittedMessage.value = draft.lastSubmittedMessage
+  messages.value = draft.messages.map(message => ({ ...message }))
+
+  if (draft.isLoading) {
+    isLoading.value = false
+    errorMessage.value = draft.errorMessage || '页面刷新后，上一次请求已中断，请重新发送上一条消息。'
+    saveSession(activeSessionId.value, messages.value)
+    return
+  }
+
+  isLoading.value = false
+  errorMessage.value = draft.errorMessage
+}
+
+function persistChatDraft() {
+  const hasDraftContent = Boolean(
+    inputMessage.value.trim()
+    || lastSubmittedMessage.value.trim()
+    || messages.value.length
+    || errorMessage.value.trim()
+    || currentModel.value.trim()
+    || currentRequestId.value.trim(),
+  )
+
+  if (!hasDraftContent) {
+    clearDraft()
+    return
+  }
+
+  saveDraft({
+    activeSessionId: activeSessionId.value,
+    currentModel: currentModel.value,
+    currentRequestId: currentRequestId.value,
+    errorMessage: errorMessage.value,
+    inputMessage: inputMessage.value,
+    isLoading: isLoading.value,
+    lastSubmittedMessage: lastSubmittedMessage.value,
+    messages: messages.value.map(message => ({ ...message })),
+    updatedAt: new Date().toISOString(),
+  })
+}
+
+function bindBeforeUnload() {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+  window.addEventListener('beforeunload', handleBeforeUnload)
+}
+
+function handleBeforeUnload() {
+  if (isLoading.value) {
+    markPendingReload()
+    return
+  }
+
+  clearPendingReload()
 }
 
 function setupMobileViewportWatcher() {

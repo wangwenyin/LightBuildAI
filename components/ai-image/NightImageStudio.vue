@@ -2,6 +2,8 @@
 import type { CSSProperties } from 'vue'
 import AppSidebarShell from '~/components/shared/AppSidebarShell.vue'
 import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
+import { useLocalImageDraft } from '~/composables/useLocalImageDraft'
+import { usePendingReloadResume } from '~/composables/usePendingReloadResume'
 import { useLocalImageHistory } from '~/composables/useLocalImageHistory'
 
 const props = withDefaults(defineProps<{
@@ -32,6 +34,7 @@ const {
   onFileChange,
   primaryActionLabel,
   resetGenerator,
+  resumePendingTask,
   restoreHistorySnapshot,
   resultUrl,
   sessionId,
@@ -50,6 +53,8 @@ const {
   records,
   saveRecord,
 } = useLocalImageHistory()
+const { clearDraft, loadDraft, saveDraft } = useLocalImageDraft()
+const { clearPendingReload, consumePendingReload, markPendingReload } = usePendingReloadResume('image')
 
 const isSidebarExpanded = shallowRef(true)
 const isMobileViewport = shallowRef(false)
@@ -102,18 +107,34 @@ onMounted(() => {
   setupMobileViewportWatcher()
   setupPromptShellObserver()
   loadRecords()
+  bindBeforeUnload()
+
+  if (consumePendingReload()) {
+    restoreImageDraft()
+    return
+  }
+
+  clearDraft()
   draftHistoryId.value = createHistoryId()
 })
 
 watch(
   () => [
+    activeHistoryId.value,
+    activeView.value,
+    draftHistoryId.value,
     sourcePreviewUrl.value,
     resultUrl.value,
     customPrompt.value,
     taskStatus.value,
     currentTaskId.value,
+    lastErrorMessage.value,
+    loadingText.value,
+    sessionId.value,
   ],
   () => {
+    persistImageDraft()
+
     if (!historySourceImageUrl.value && !historyResultImageUrl.value) {
       return
     }
@@ -152,6 +173,7 @@ watch(resultUrl, (nextValue, previousValue) => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   unbindViewportListener(mobileViewportQuery, handleMobileViewportChange)
   promptResizeObserver?.disconnect()
 
@@ -221,6 +243,8 @@ function handleNewTask() {
   activeHistoryId.value = ''
   draftHistoryId.value = createHistoryId()
   resetGenerator()
+  clearDraft()
+  clearPendingReload()
   closeMobileSidebar()
 }
 
@@ -391,6 +415,77 @@ async function handleGenerate() {
   } catch {
     // 失败状态已由 composable 写入 taskStatus，这里不再使用阻断式弹窗。
   }
+}
+
+function restoreImageDraft() {
+  const draft = loadDraft()
+
+  if (!draft) {
+    draftHistoryId.value = createHistoryId()
+    return
+  }
+
+  activeHistoryId.value = draft.activeHistoryId
+  draftHistoryId.value = draft.draftHistoryId || draft.activeHistoryId || createHistoryId()
+  restoreHistorySnapshot({
+    activeView: draft.activeView,
+    errorMessage: draft.errorMessage,
+    loadingText: draft.loadingText,
+    prompt: draft.prompt,
+    resultImageUrl: draft.resultImageUrl,
+    sourceImageUrl: draft.sourceImageUrl,
+    status: draft.status,
+    taskId: draft.currentTaskId,
+  })
+
+  if (draft.currentTaskId && !draft.resultImageUrl && !draft.status.startsWith('失败')) {
+    void resumePendingTask(draft.currentTaskId, draft.sessionId)
+  }
+}
+
+function persistImageDraft() {
+  const hasDraftContent = Boolean(
+    historySourceImageUrl.value
+    || historyResultImageUrl.value
+    || customPrompt.value.trim()
+    || taskStatus.value.trim()
+    || currentTaskId.value.trim()
+    || lastErrorMessage.value.trim(),
+  )
+
+  if (!hasDraftContent) {
+    clearDraft()
+    return
+  }
+
+  saveDraft({
+    activeHistoryId: activeHistoryId.value,
+    activeView: activeView.value,
+    currentTaskId: currentTaskId.value,
+    draftHistoryId: draftHistoryId.value,
+    errorMessage: lastErrorMessage.value,
+    loadingText: loadingText.value,
+    prompt: customPrompt.value,
+    resultImageUrl: historyResultImageUrl.value,
+    sessionId: sessionId.value,
+    sourceImageUrl: historySourceImageUrl.value,
+    status: taskStatus.value,
+    updatedAt: new Date().toISOString(),
+  })
+}
+
+function bindBeforeUnload() {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+  window.addEventListener('beforeunload', handleBeforeUnload)
+}
+
+function handleBeforeUnload() {
+  if (isLoading.value) {
+    markPendingReload()
+    return
+  }
+
+  clearPendingReload()
 }
 
 function setupPromptShellObserver() {

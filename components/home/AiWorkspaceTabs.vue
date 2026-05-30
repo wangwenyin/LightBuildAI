@@ -36,6 +36,10 @@ const tabs: Array<{
   },
 ]
 
+const activePanelComponent = computed(() => activeTab.value === 'chat'
+  ? TokenHubChatPanel
+  : NightImageStudio)
+
 watch(activeTab, () => {
   isMobileSidebarOpen.value = false
 })
@@ -135,16 +139,14 @@ function resolveWorkspaceTab(tabQuery: unknown): WorkspaceTab {
       </header>
 
       <div class="workspace-content" :class="`workspace-content--${activeTab}`">
-        <NightImageStudio
-          v-if="activeTab === 'image'"
-          :mobile-sidebar-open="isMobileSidebarOpen"
-          @update:mobile-sidebar-open="isMobileSidebarOpen = $event"
-        />
-        <TokenHubChatPanel
-          v-else
-          :mobile-sidebar-open="isMobileSidebarOpen"
-          @update:mobile-sidebar-open="isMobileSidebarOpen = $event"
-        />
+        <KeepAlive>
+          <component
+            :is="activePanelComponent"
+            :key="activeTab"
+            :mobile-sidebar-open="isMobileSidebarOpen"
+            @update:mobile-sidebar-open="isMobileSidebarOpen = $event"
+          />
+        </KeepAlive>
       </div>
     </div>
   </div>

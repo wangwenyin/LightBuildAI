@@ -18,12 +18,12 @@ export default defineEventHandler(async (event) => {
 
   const validatedFile = validateUploadFile(file)
   const { objectKey, requestId } = buildSourceObjectKey({
-    filename: file.filename,
+    filename: validatedFile.filename,
     sessionId: sessionId || 'anonymous',
     baseDir: config.ossDir,
   })
 
-  const url = await uploadOSS(file.data, file.filename, {
+  const url = await uploadOSS(file.data!, validatedFile.filename, {
     ossRegion: config.ossRegion,
     ossAccessKeyId: config.ossAccessKeyId,
     ossAccessKeySecret: config.ossAccessKeySecret,

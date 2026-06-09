@@ -542,12 +542,18 @@ function bindViewportListener(query: MediaQueryList | null, listener: (event: Me
     return
   }
 
-  if ('addEventListener' in query) {
+  if (typeof query.addEventListener === 'function') {
     query.addEventListener('change', listener)
     return
   }
 
-  query.addListener(listener)
+  const legacyQuery = query as MediaQueryList & {
+    addListener?: (callback: (event: MediaQueryListEvent) => void) => void
+  }
+
+  if (typeof legacyQuery.addListener === 'function') {
+    legacyQuery.addListener(listener)
+  }
 }
 
 function unbindViewportListener(query: MediaQueryList | null, listener: (event: MediaQueryListEvent) => void) {
@@ -555,12 +561,18 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
     return
   }
 
-  if ('removeEventListener' in query) {
+  if (typeof query.removeEventListener === 'function') {
     query.removeEventListener('change', listener)
     return
   }
 
-  query.removeListener(listener)
+  const legacyQuery = query as MediaQueryList & {
+    removeListener?: (callback: (event: MediaQueryListEvent) => void) => void
+  }
+
+  if (typeof legacyQuery.removeListener === 'function') {
+    legacyQuery.removeListener(listener)
+  }
 }
 </script>
 

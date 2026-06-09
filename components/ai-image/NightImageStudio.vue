@@ -55,6 +55,7 @@ const {
 } = useLocalImageHistory()
 const { clearDraft, loadDraft, saveDraft } = useLocalImageDraft()
 const { clearPendingReload, consumePendingReload, markPendingReload } = usePendingReloadResume('image')
+const MAX_CUSTOM_PROMPT_LENGTH = 10000
 
 const isSidebarExpanded = shallowRef(true)
 const isMobileViewport = shallowRef(false)
@@ -136,6 +137,9 @@ const previewImageTitle = computed(() => {
 
   return '图片预览'
 })
+const trimmedPromptLength = computed(() => customPrompt.value.trim().length)
+const remainingPromptLength = computed(() => MAX_CUSTOM_PROMPT_LENGTH - trimmedPromptLength.value)
+const isPromptTooLong = computed(() => remainingPromptLength.value < 0)
 
 onMounted(() => {
   setupMobileViewportWatcher()
@@ -1078,14 +1082,24 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
           <textarea
             v-model="customPrompt"
             class="prompt-textarea"
+            :class="{ 'prompt-textarea--error': isPromptTooLong }"
             placeholder="请描述你想要的夜景气质..."
           />
+
+          <div class="prompt-meta">
+            <p class="prompt-meta-text" :class="{ 'prompt-meta-text--error': isPromptTooLong }">
+              {{ isPromptTooLong ? `已超出 ${Math.abs(remainingPromptLength)} 字` : `还可输入 ${remainingPromptLength} 字` }}
+            </p>
+            <p class="prompt-meta-count" :class="{ 'prompt-meta-count--error': isPromptTooLong }">
+              {{ trimmedPromptLength }} / {{ MAX_CUSTOM_PROMPT_LENGTH }}
+            </p>
+          </div>
 
           <div class="prompt-actions">
             <button
               class="primary-button ui-button-reset ui-interactive-lift ui-disabled"
               type="button"
-              :disabled="isLoading || isRestoringHistory"
+              :disabled="isLoading || isRestoringHistory || isPromptTooLong"
               @click="handleGenerate"
             >
               {{ primaryActionLabel }}
@@ -1718,6 +1732,36 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   line-height: 1.9;
   resize: none;
   outline: none;
+}
+
+.prompt-textarea--error {
+  color: #9a3412;
+}
+
+.prompt-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.prompt-meta-text,
+.prompt-meta-count {
+  margin: 0;
+  color: #78716c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.prompt-meta-count {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.prompt-meta-text--error,
+.prompt-meta-count--error {
+  color: #b45309;
 }
 
 .ghost-button {

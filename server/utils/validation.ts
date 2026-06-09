@@ -4,7 +4,7 @@ const ALLOWED_UPLOAD_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'ima
 const MAX_UPLOAD_FILE_BYTES = 5 * 1024 * 1024
 const MAX_CHAT_MESSAGE_LENGTH = 4000
 const MAX_CHAT_HISTORY_MESSAGES = 20
-const MAX_PROMPT_LENGTH = 2000
+const MAX_PROMPT_LENGTH = 10000
 const MAX_IMAGE_DIMENSION = 8192
 
 type UploadMimeType = typeof ALLOWED_UPLOAD_MIME_TYPES[number]

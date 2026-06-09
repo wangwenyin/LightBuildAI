@@ -64,9 +64,31 @@ const shouldAnimateResultReveal = shallowRef(false)
 const promptShellElement = shallowRef<HTMLElement | null>(null)
 const mobilePromptOffset = shallowRef('0px')
 const isRestoringHistory = shallowRef(false)
+const isImagePreviewOpen = shallowRef(false)
+const previewViewportElement = shallowRef<HTMLElement | null>(null)
+const previewScale = shallowRef(1)
+const previewOffsetX = shallowRef(0)
+const previewOffsetY = shallowRef(0)
+const isPreviewDragging = shallowRef(false)
+const previewTransformStyle = computed<CSSProperties>(() => ({
+  transform: `translate3d(${previewOffsetX.value}px, ${previewOffsetY.value}px, 0) scale(${previewScale.value})`,
+}))
+const previewScaleLabel = computed(() => `${Math.round(previewScale.value * 100)}%`)
 let resultRevealTimer: number | null = null
 let mobileViewportQuery: MediaQueryList | null = null
 let promptResizeObserver: ResizeObserver | null = null
+let previewDragPointerId: number | null = null
+let previewDragStartX = 0
+let previewDragStartY = 0
+let previewDragOriginOffsetX = 0
+let previewDragOriginOffsetY = 0
+let previewPinchStartDistance = 0
+let previewPinchStartScale = 1
+let previewPinchStartOffsetX = 0
+let previewPinchStartOffsetY = 0
+let previewPinchCenterX = 0
+let previewPinchCenterY = 0
+const previewPointers = new Map<number, { x: number, y: number }>()
 const isMobileSidebarOpen = computed({
   get: () => props.mobileSidebarOpen,
   set: value => emit('update:mobileSidebarOpen', value),
@@ -102,12 +124,25 @@ const imageWrapperClasses = computed(() => ({
   'image-wrapper--result': activeView.value === 'result' && hasResultImage.value,
   'image-wrapper--reveal': shouldAnimateResultReveal.value && activeView.value === 'result' && hasResultImage.value,
 }))
+const previewImageUrl = computed(() => displayedImageUrl.value || '')
+const previewImageTitle = computed(() => {
+  if (activeView.value === 'result' && hasResultImage.value) {
+    return '夜景成图预览'
+  }
+
+  if (hasSourceImage.value) {
+    return '原图预览'
+  }
+
+  return '图片预览'
+})
 
 onMounted(() => {
   setupMobileViewportWatcher()
   setupPromptShellObserver()
   loadRecords()
   bindBeforeUnload()
+  window.addEventListener('keydown', handleWindowKeydown)
 
   if (consumePendingReload()) {
     restoreImageDraft()
@@ -172,8 +207,21 @@ watch(resultUrl, (nextValue, previousValue) => {
   }, 2200)
 })
 
+watch(
+  () => [isImagePreviewOpen.value, previewImageUrl.value],
+  ([isOpen]) => {
+    if (isOpen) {
+      resetPreviewTransform()
+      return
+    }
+
+    releasePreviewInteraction()
+  },
+)
+
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
+  window.removeEventListener('keydown', handleWindowKeydown)
   unbindViewportListener(mobileViewportQuery, handleMobileViewportChange)
   promptResizeObserver?.disconnect()
 
@@ -195,6 +243,267 @@ function toggleSidebar() {
 
 function closeMobileSidebar() {
   isMobileSidebarOpen.value = false
+}
+
+function openImagePreview() {
+  if (!displayedImageUrl.value || isRestoringHistory.value) {
+    return
+  }
+
+  resetPreviewTransform()
+  isImagePreviewOpen.value = true
+}
+
+function closeImagePreview() {
+  releasePreviewInteraction()
+  resetPreviewTransform()
+  isImagePreviewOpen.value = false
+}
+
+function handleWindowKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && isImagePreviewOpen.value) {
+    closeImagePreview()
+  }
+}
+
+function resetPreviewTransform() {
+  previewScale.value = 1
+  previewOffsetX.value = 0
+  previewOffsetY.value = 0
+}
+
+function releasePreviewInteraction() {
+  isPreviewDragging.value = false
+  previewDragPointerId = null
+  previewPinchStartDistance = 0
+  previewPointers.clear()
+}
+
+function clampPreviewScale(scale: number) {
+  return Math.min(5, Math.max(1, scale))
+}
+
+function clampPreviewOffsets(nextOffsetX: number, nextOffsetY: number, scale = previewScale.value) {
+  const viewport = previewViewportElement.value
+
+  if (!viewport || scale <= 1) {
+    return { x: 0, y: 0 }
+  }
+
+  const rect = viewport.getBoundingClientRect()
+  const maxOffsetX = ((rect.width * scale) - rect.width) / 2 + 24
+  const maxOffsetY = ((rect.height * scale) - rect.height) / 2 + 24
+
+  return {
+    x: Math.min(maxOffsetX, Math.max(-maxOffsetX, nextOffsetX)),
+    y: Math.min(maxOffsetY, Math.max(-maxOffsetY, nextOffsetY)),
+  }
+}
+
+function applyPreviewTransform(nextScale: number, nextOffsetX: number, nextOffsetY: number) {
+  const clampedScale = clampPreviewScale(nextScale)
+  const clampedOffsets = clampPreviewOffsets(nextOffsetX, nextOffsetY, clampedScale)
+  previewScale.value = clampedScale
+  previewOffsetX.value = clampedOffsets.x
+  previewOffsetY.value = clampedOffsets.y
+}
+
+function zoomPreview(nextScale: number, originClientX?: number, originClientY?: number) {
+  const viewport = previewViewportElement.value
+  const currentScale = previewScale.value
+  const clampedScale = clampPreviewScale(nextScale)
+
+  if (!viewport || clampedScale === currentScale) {
+    if (clampedScale === 1) {
+      applyPreviewTransform(1, 0, 0)
+    }
+    return
+  }
+
+  const rect = viewport.getBoundingClientRect()
+  const originX = originClientX ?? rect.left + rect.width / 2
+  const originY = originClientY ?? rect.top + rect.height / 2
+  const relativeX = originX - rect.left - rect.width / 2
+  const relativeY = originY - rect.top - rect.height / 2
+  const scaleRatio = clampedScale / currentScale
+  const nextOffsetX = (previewOffsetX.value - relativeX) * scaleRatio + relativeX
+  const nextOffsetY = (previewOffsetY.value - relativeY) * scaleRatio + relativeY
+
+  applyPreviewTransform(clampedScale, nextOffsetX, nextOffsetY)
+}
+
+function handlePreviewWheel(event: WheelEvent) {
+  if (!isImagePreviewOpen.value) {
+    return
+  }
+
+  event.preventDefault()
+  const delta = event.deltaY < 0 ? 0.16 : -0.16
+  zoomPreview(previewScale.value + delta, event.clientX, event.clientY)
+}
+
+function updatePreviewPointer(event: PointerEvent) {
+  previewPointers.set(event.pointerId, {
+    x: event.clientX,
+    y: event.clientY,
+  })
+}
+
+function getPreviewPointerDistance() {
+  const [firstPointer, secondPointer] = Array.from(previewPointers.values())
+
+  if (!firstPointer || !secondPointer) {
+    return 0
+  }
+
+  return Math.hypot(secondPointer.x - firstPointer.x, secondPointer.y - firstPointer.y)
+}
+
+function getPreviewPointerCenter() {
+  const [firstPointer, secondPointer] = Array.from(previewPointers.values())
+
+  if (!firstPointer || !secondPointer) {
+    return null
+  }
+
+  return {
+    x: (firstPointer.x + secondPointer.x) / 2,
+    y: (firstPointer.y + secondPointer.y) / 2,
+  }
+}
+
+function startPreviewPinch() {
+  const center = getPreviewPointerCenter()
+
+  if (!center) {
+    return
+  }
+
+  previewPinchStartDistance = getPreviewPointerDistance()
+  previewPinchStartScale = previewScale.value
+  previewPinchStartOffsetX = previewOffsetX.value
+  previewPinchStartOffsetY = previewOffsetY.value
+  previewPinchCenterX = center.x
+  previewPinchCenterY = center.y
+  isPreviewDragging.value = false
+  previewDragPointerId = null
+}
+
+function handlePreviewPointerDown(event: PointerEvent) {
+  if (!isImagePreviewOpen.value) {
+    return
+  }
+
+  if (event.currentTarget instanceof HTMLElement && typeof event.currentTarget.setPointerCapture === 'function') {
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  updatePreviewPointer(event)
+
+  if (previewPointers.size === 2) {
+    startPreviewPinch()
+    return
+  }
+
+  if (previewPointers.size > 1 || previewScale.value <= 1) {
+    return
+  }
+
+  previewDragPointerId = event.pointerId
+  previewDragStartX = event.clientX
+  previewDragStartY = event.clientY
+  previewDragOriginOffsetX = previewOffsetX.value
+  previewDragOriginOffsetY = previewOffsetY.value
+  isPreviewDragging.value = true
+}
+
+function handlePreviewPointerMove(event: PointerEvent) {
+  if (!previewPointers.has(event.pointerId)) {
+    return
+  }
+
+  updatePreviewPointer(event)
+
+  if (previewPointers.size >= 2) {
+    const center = getPreviewPointerCenter()
+    const nextDistance = getPreviewPointerDistance()
+
+    if (!center || !previewPinchStartDistance) {
+      return
+    }
+
+    const nextScale = clampPreviewScale(previewPinchStartScale * (nextDistance / previewPinchStartDistance))
+    const deltaX = center.x - previewPinchCenterX
+    const deltaY = center.y - previewPinchCenterY
+    const viewport = previewViewportElement.value
+
+    if (!viewport) {
+      return
+    }
+
+    const rect = viewport.getBoundingClientRect()
+    const focalX = center.x - rect.left - rect.width / 2
+    const focalY = center.y - rect.top - rect.height / 2
+    const scaleRatio = nextScale / previewPinchStartScale
+    const nextOffsetX = (previewPinchStartOffsetX - focalX) * scaleRatio + focalX + deltaX
+    const nextOffsetY = (previewPinchStartOffsetY - focalY) * scaleRatio + focalY + deltaY
+
+    applyPreviewTransform(nextScale, nextOffsetX, nextOffsetY)
+    return
+  }
+
+  if (!isPreviewDragging.value || previewDragPointerId !== event.pointerId) {
+    return
+  }
+
+  const nextOffsetX = previewDragOriginOffsetX + (event.clientX - previewDragStartX)
+  const nextOffsetY = previewDragOriginOffsetY + (event.clientY - previewDragStartY)
+  applyPreviewTransform(previewScale.value, nextOffsetX, nextOffsetY)
+}
+
+function handlePreviewPointerUp(event: PointerEvent) {
+  if (event.currentTarget instanceof HTMLElement && typeof event.currentTarget.releasePointerCapture === 'function') {
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    } catch {
+      // 指针已释放时忽略。
+    }
+  }
+
+  previewPointers.delete(event.pointerId)
+
+  if (previewDragPointerId === event.pointerId) {
+    isPreviewDragging.value = false
+    previewDragPointerId = null
+  }
+
+  if (previewPointers.size >= 2) {
+    startPreviewPinch()
+    return
+  }
+
+  previewPinchStartDistance = 0
+
+  const [remainingPointer] = Array.from(previewPointers.entries())
+
+  if (remainingPointer && previewScale.value > 1) {
+    const [pointerId, pointer] = remainingPointer
+    previewDragPointerId = pointerId
+    previewDragStartX = pointer.x
+    previewDragStartY = pointer.y
+    previewDragOriginOffsetX = previewOffsetX.value
+    previewDragOriginOffsetY = previewOffsetY.value
+    isPreviewDragging.value = true
+    return
+  }
+
+  if (previewScale.value <= 1) {
+    applyPreviewTransform(1, 0, 0)
+  }
+}
+
+function resetPreviewZoom() {
+  resetPreviewTransform()
 }
 
 function createHistoryId() {
@@ -246,6 +555,48 @@ function handleNewTask() {
   clearDraft()
   clearPendingReload()
   closeMobileSidebar()
+}
+
+async function refreshResultImageUrl(options: {
+  sessionId?: string
+  taskId?: string
+  resultImageUrl: string
+}) {
+  const persistedResultImageUrl = normalizeHistoryAssetUrl(options.resultImageUrl)
+
+  if (!persistedResultImageUrl) {
+    return ''
+  }
+
+  if (options.taskId) {
+    try {
+      const task = await $fetch<{
+        status: 'processing' | 'done' | 'failed'
+        imageUrl?: string
+      }>('/api/task', {
+        query: {
+          taskId: options.taskId,
+          ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+        },
+      })
+
+      if (task.imageUrl) {
+        return task.imageUrl
+      }
+    } catch {
+      // 任务查询失败时继续回退到资源重签名，避免历史图片停留在过期链接。
+    }
+  }
+
+  if (!isPrivateOssUrl(persistedResultImageUrl)) {
+    return persistedResultImageUrl
+  }
+
+  const result = await $fetch<{ url: string }>('/api/resource/sign', {
+    query: { url: persistedResultImageUrl },
+  })
+
+  return result.url
 }
 
 function handleDeleteRecord(recordId: string) {
@@ -300,26 +651,12 @@ async function refreshHistoryAssetUrls(record: {
       nextSourceImageUrl = source.url
     }
 
-    if (record.taskId) {
-      const task = await $fetch<{
-        status: 'processing' | 'done' | 'failed'
-        imageUrl?: string
-      }>('/api/task', {
-        query: {
-          taskId: record.taskId,
-          ...(record.sessionId ? { sessionId: record.sessionId } : {}),
-        },
+    if (persistedResultImageUrl) {
+      nextResultImageUrl = await refreshResultImageUrl({
+        sessionId: record.sessionId,
+        taskId: record.taskId,
+        resultImageUrl: persistedResultImageUrl,
       })
-
-      if (task.imageUrl) {
-        nextResultImageUrl = task.imageUrl
-      }
-    } else if (persistedResultImageUrl && isPrivateOssUrl(persistedResultImageUrl)) {
-      const result = await $fetch<{ url: string }>('/api/resource/sign', {
-        query: { url: persistedResultImageUrl },
-      })
-
-      nextResultImageUrl = result.url
     }
 
     restoreHistorySnapshot({
@@ -440,7 +777,45 @@ function restoreImageDraft() {
 
   if (draft.currentTaskId && !draft.resultImageUrl && !draft.status.startsWith('失败')) {
     void resumePendingTask(draft.currentTaskId, draft.sessionId)
+    return
   }
+
+  if (!draft.sourceImageUrl && !draft.resultImageUrl) {
+    return
+  }
+
+  isRestoringHistory.value = true
+  void (async () => {
+    try {
+      const nextSourceImageUrl = draft.sourceImageUrl && isPrivateOssUrl(draft.sourceImageUrl)
+        ? (await $fetch<{ url: string }>('/api/resource/sign', {
+            query: { url: draft.sourceImageUrl },
+          })).url
+        : draft.sourceImageUrl
+      const nextResultImageUrl = draft.resultImageUrl
+        ? await refreshResultImageUrl({
+            sessionId: draft.sessionId,
+            taskId: draft.currentTaskId,
+            resultImageUrl: draft.resultImageUrl,
+          })
+        : ''
+
+      restoreHistorySnapshot({
+        activeView: draft.activeView,
+        errorMessage: draft.errorMessage,
+        loadingText: draft.loadingText,
+        prompt: draft.prompt,
+        resultImageUrl: nextResultImageUrl,
+        sourceImageUrl: nextSourceImageUrl,
+        status: draft.status,
+        taskId: draft.currentTaskId,
+      })
+    } catch {
+      // 草稿恢复失败时保持本地快照，避免阻断页面加载。
+    } finally {
+      isRestoringHistory.value = false
+    }
+  })()
 }
 
 function persistImageDraft() {
@@ -519,12 +894,18 @@ function bindViewportListener(query: MediaQueryList | null, listener: (event: Me
     return
   }
 
-  if ('addEventListener' in query) {
+  if (typeof query.addEventListener === 'function') {
     query.addEventListener('change', listener)
     return
   }
 
-  query.addListener(listener)
+  const legacyQuery = query as MediaQueryList & {
+    addListener?: (callback: (event: MediaQueryListEvent) => void) => void
+  }
+
+  if (typeof legacyQuery.addListener === 'function') {
+    legacyQuery.addListener(listener)
+  }
 }
 
 function unbindViewportListener(query: MediaQueryList | null, listener: (event: MediaQueryListEvent) => void) {
@@ -532,12 +913,18 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
     return
   }
 
-  if ('removeEventListener' in query) {
+  if (typeof query.removeEventListener === 'function') {
     query.removeEventListener('change', listener)
     return
   }
 
-  query.removeListener(listener)
+  const legacyQuery = query as MediaQueryList & {
+    removeListener?: (callback: (event: MediaQueryListEvent) => void) => void
+  }
+
+  if (typeof legacyQuery.removeListener === 'function') {
+    legacyQuery.removeListener(listener)
+  }
 }
 </script>
 
@@ -612,7 +999,17 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
               </span>
             </div>
             <div v-else-if="displayedImageUrl" class="image-wrapper" :class="imageWrapperClasses">
-              <img :src="displayedImageUrl" :alt="stageTitle" class="stage-image">
+              <button
+                class="stage-image-button ui-button-reset"
+                type="button"
+                :aria-label="`点击预览${stageTitle}`"
+                @click="openImagePreview"
+              >
+                <img :src="displayedImageUrl" :alt="stageTitle" class="stage-image">
+                <span class="stage-image-preview-hint">
+                  点击预览
+                </span>
+              </button>
 
               <div v-if="isLoading && hasSourceImage" class="curtain-overlay" aria-hidden="true">
                 <div class="curtain-sweep" />
@@ -627,7 +1024,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
                 class="download-float-button"
                 aria-label="下载成片"
                 type="button"
-                @click="downloadResult"
+                @click.stop="downloadResult"
               >
                 <span class="download-float-button__icon" aria-hidden="true">
                   <svg viewBox="0 0 20 20">
@@ -706,6 +1103,60 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
         </div>
       </div>
     </main>
+
+    <Teleport to="body">
+      <div
+        v-if="isImagePreviewOpen && previewImageUrl"
+        class="image-preview-overlay"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="previewImageTitle"
+        @click.self="closeImagePreview"
+      >
+        <button
+          class="image-preview-close ui-button-reset"
+          type="button"
+          aria-label="关闭预览"
+          @click="closeImagePreview"
+        >
+          ×
+        </button>
+
+        <figure class="image-preview-frame">
+          <div
+            ref="previewViewportElement"
+            class="image-preview-viewport"
+            :class="{ 'image-preview-viewport--dragging': isPreviewDragging }"
+            @wheel.prevent="handlePreviewWheel"
+          >
+            <img
+              :src="previewImageUrl"
+              :alt="previewImageTitle"
+              class="image-preview-image"
+              :style="previewTransformStyle"
+              @pointerdown="handlePreviewPointerDown"
+              @pointermove="handlePreviewPointerMove"
+              @pointerup="handlePreviewPointerUp"
+              @pointercancel="handlePreviewPointerUp"
+            >
+          </div>
+          <figcaption class="image-preview-caption">
+            {{ previewImageTitle }}
+            <span class="image-preview-caption-meta">{{ previewScaleLabel }}</span>
+          </figcaption>
+        </figure>
+
+        <button
+          v-if="previewScale > 1"
+          class="image-preview-reset ui-button-reset"
+          type="button"
+          aria-label="重置缩放"
+          @click="resetPreviewZoom"
+        >
+          重置
+        </button>
+      </div>
+    </Teleport>
   </section>
 </template>
 
@@ -845,6 +1296,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   height: 420px;
 }
 
+.stage-image-button {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: zoom-in;
+}
+
 .image-wrapper--result {
   background: #080b13;
 }
@@ -876,6 +1335,40 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   height: 100%;
   max-height: 820px;
   object-fit: contain;
+}
+
+.stage-image-preview-hint {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.52);
+  color: #f8fafc;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  backdrop-filter: blur(12px);
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s ease,
+    background-color 0.22s ease;
+  pointer-events: none;
+  text-transform: uppercase;
+}
+
+.stage-image-button:hover .stage-image-preview-hint,
+.stage-image-button:focus-visible .stage-image-preview-hint {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.stage-image-button:focus-visible {
+  outline: 2px solid rgba(245, 158, 11, 0.88);
+  outline-offset: -2px;
 }
 
 .image-stage--loading {
@@ -1015,6 +1508,131 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   color: #57534e;
   font-size: 13px;
   line-height: 1.7;
+}
+
+.image-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background:
+    radial-gradient(circle at top, rgba(245, 158, 11, 0.12), transparent 24%),
+    rgba(2, 6, 23, 0.88);
+  backdrop-filter: blur(12px);
+}
+
+.image-preview-frame {
+  position: relative;
+  display: flex;
+  max-width: min(92vw, 1440px);
+  max-height: 88vh;
+  margin: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.image-preview-viewport {
+  position: relative;
+  display: flex;
+  max-width: min(92vw, 1440px);
+  max-height: calc(88vh - 44px);
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 24px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.image-preview-viewport--dragging {
+  cursor: grabbing;
+}
+
+.image-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: calc(88vh - 44px);
+  border-radius: 24px;
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  object-fit: contain;
+  transform-origin: center center;
+  transition: transform 0.08s ease-out;
+  user-select: none;
+  -webkit-user-drag: none;
+  touch-action: none;
+}
+
+.image-preview-caption {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: rgba(248, 250, 252, 0.88);
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.image-preview-caption-meta {
+  color: rgba(248, 250, 252, 0.64);
+  font-size: 11px;
+}
+
+.image-preview-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.6);
+  color: #f8fafc;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.image-preview-close:hover,
+.image-preview-close:focus-visible {
+  background: rgba(30, 41, 59, 0.92);
+  transform: scale(1.04);
+}
+
+.image-preview-reset {
+  position: absolute;
+  right: 76px;
+  top: 20px;
+  min-width: 64px;
+  height: 44px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.6);
+  color: #f8fafc;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    background-color 0.2s ease;
+  text-transform: uppercase;
+}
+
+.image-preview-reset:hover,
+.image-preview-reset:focus-visible {
+  background: rgba(30, 41, 59, 0.92);
+  transform: scale(1.04);
 }
 
 .status-inline-dot {

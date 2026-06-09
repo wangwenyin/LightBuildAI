@@ -742,7 +742,7 @@ function getPersistableImageUrl(url: string) {
       return parsed.pathname
     }
 
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? normalized : ''
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : ''
   } catch {
     return ''
   }

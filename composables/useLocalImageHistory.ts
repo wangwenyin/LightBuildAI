@@ -81,7 +81,12 @@ export function useLocalImageHistory() {
     window.localStorage.setItem(IMAGE_HISTORY_STORAGE_KEY, JSON.stringify(nextRecords))
   }
 
-  function saveRecord(record: Omit<LocalImageHistoryRecord, 'title' | 'updatedAt'> & Partial<Pick<LocalImageHistoryRecord, 'title'>>) {
+  function saveRecord(
+    record: Omit<LocalImageHistoryRecord, 'title' | 'updatedAt'> & Partial<Pick<LocalImageHistoryRecord, 'title'>>,
+    options: {
+      moveToTop?: boolean
+    } = {},
+  ) {
     if (!record.sourceImageUrl && !record.resultImageUrl) {
       return
     }
@@ -95,7 +100,22 @@ export function useLocalImageHistory() {
     }
 
     const deduped = records.value.filter(item => item.id !== nextRecord.id)
-    persistRecords([nextRecord, ...deduped].slice(0, MAX_IMAGE_HISTORY))
+
+    if (options.moveToTop ?? true) {
+      persistRecords([nextRecord, ...deduped].slice(0, MAX_IMAGE_HISTORY))
+      return
+    }
+
+    const existingIndex = records.value.findIndex(item => item.id === nextRecord.id)
+
+    if (existingIndex === -1) {
+      persistRecords([...records.value, nextRecord].slice(-MAX_IMAGE_HISTORY))
+      return
+    }
+
+    const nextRecords = [...records.value]
+    nextRecords.splice(existingIndex, 1, nextRecord)
+    persistRecords(nextRecords)
   }
 
   function getRecord(recordId: string) {

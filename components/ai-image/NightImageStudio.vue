@@ -65,6 +65,7 @@ const shouldAnimateResultReveal = shallowRef(false)
 const promptShellElement = shallowRef<HTMLElement | null>(null)
 const mobilePromptOffset = shallowRef('0px')
 const isRestoringHistory = shallowRef(false)
+const isSwitchingHistoryRecord = shallowRef(false)
 const isImagePreviewOpen = shallowRef(false)
 const previewViewportElement = shallowRef<HTMLElement | null>(null)
 const previewScale = shallowRef(1)
@@ -116,6 +117,7 @@ const recentRecords = computed(() => records.value.map(record => ({
   subtitle: record.prompt || '未填写提示词',
   meta: formatRelativeTime(record.updatedAt),
 })))
+const selectedHistoryId = computed(() => activeHistoryId.value || draftHistoryId.value)
 
 const stageFrameClasses = computed(() => ({
   'image-stage--loading': isLoading.value && hasSourceImage.value,
@@ -173,24 +175,6 @@ watch(
   ],
   () => {
     persistImageDraft()
-
-    if (!historySourceImageUrl.value && !historyResultImageUrl.value) {
-      return
-    }
-
-    if (!draftHistoryId.value) {
-      draftHistoryId.value = createHistoryId()
-    }
-
-    saveRecord({
-      id: draftHistoryId.value,
-      sessionId: sessionId.value || undefined,
-      taskId: currentTaskId.value || undefined,
-      prompt: customPrompt.value,
-      sourceImageUrl: historySourceImageUrl.value,
-      resultImageUrl: historyResultImageUrl.value,
-      status: taskStatus.value,
-    })
   },
 )
 
@@ -538,18 +522,24 @@ async function openHistory(recordId: string) {
 
   activeHistoryId.value = record.id
   draftHistoryId.value = record.id
-  restoreHistorySnapshot({
-    sourceImageUrl: record.sourceImageUrl,
-    resultImageUrl: record.resultImageUrl,
-    prompt: record.prompt,
-    status: record.status,
-    taskId: record.taskId,
-  })
+  isSwitchingHistoryRecord.value = true
 
-  isRestoringHistory.value = true
-  await refreshHistoryAssetUrls(record)
-  isRestoringHistory.value = false
-  closeMobileSidebar()
+  try {
+    restoreHistorySnapshot({
+      sourceImageUrl: record.sourceImageUrl,
+      resultImageUrl: record.resultImageUrl,
+      prompt: record.prompt,
+      status: record.status,
+      taskId: record.taskId,
+    })
+
+    isRestoringHistory.value = true
+    await refreshHistoryAssetUrls(record)
+    closeMobileSidebar()
+  } finally {
+    isRestoringHistory.value = false
+    isSwitchingHistoryRecord.value = false
+  }
 }
 
 function handleNewTask() {
@@ -679,6 +669,8 @@ async function refreshHistoryAssetUrls(record: {
       sourceImageUrl: persistedSourceImageUrl,
       resultImageUrl: persistedResultImageUrl,
       status: record.status,
+    }, {
+      moveToTop: false,
     })
   } catch {
     // 历史记录保底回退到原始快照，不阻断用户查看已有信息。
@@ -753,6 +745,20 @@ async function handleGenerate() {
 
     await generateNightImage()
     activeHistoryId.value = draftHistoryId.value
+
+    if (historySourceImageUrl.value || historyResultImageUrl.value) {
+      saveRecord({
+        id: draftHistoryId.value,
+        sessionId: sessionId.value || undefined,
+        taskId: currentTaskId.value || undefined,
+        prompt: customPrompt.value,
+        sourceImageUrl: historySourceImageUrl.value,
+        resultImageUrl: historyResultImageUrl.value,
+        status: taskStatus.value,
+      }, {
+        moveToTop: true,
+      })
+    }
   } catch {
     // 失败状态已由 composable 写入 taskStatus，这里不再使用阻断式弹窗。
   }
@@ -948,7 +954,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
       <RecentRecordsPanel
         title="最近"
         :items="recentRecords"
-        :active-id="activeHistoryId"
+        :active-id="selectedHistoryId"
         empty-text="暂无生成记录"
         show-clear
         show-delete
@@ -1010,9 +1016,6 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
                 @click="openImagePreview"
               >
                 <img :src="displayedImageUrl" :alt="stageTitle" class="stage-image">
-                <span class="stage-image-preview-hint">
-                  点击预览
-                </span>
               </button>
 
               <div v-if="isLoading && hasSourceImage" class="curtain-overlay" aria-hidden="true">
@@ -1349,35 +1352,6 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   height: 100%;
   max-height: 820px;
   object-fit: contain;
-}
-
-.stage-image-preview-hint {
-  position: absolute;
-  right: 18px;
-  bottom: 18px;
-  padding: 8px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.52);
-  color: #f8fafc;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  backdrop-filter: blur(12px);
-  opacity: 0;
-  transform: translateY(6px);
-  transition:
-    opacity 0.22s ease,
-    transform 0.22s ease,
-    background-color 0.22s ease;
-  pointer-events: none;
-  text-transform: uppercase;
-}
-
-.stage-image-button:hover .stage-image-preview-hint,
-.stage-image-button:focus-visible .stage-image-preview-hint {
-  opacity: 1;
-  transform: translateY(0);
 }
 
 .stage-image-button:focus-visible {

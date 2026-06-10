@@ -68,6 +68,7 @@ const isRestoringHistory = shallowRef(false)
 const isSwitchingHistoryRecord = shallowRef(false)
 const isImagePreviewOpen = shallowRef(false)
 const previewViewportElement = shallowRef<HTMLElement | null>(null)
+const previewImageElement = shallowRef<HTMLImageElement | null>(null)
 const previewScale = shallowRef(1)
 const previewOffsetX = shallowRef(0)
 const previewOffsetY = shallowRef(0)
@@ -273,14 +274,22 @@ function clampPreviewScale(scale: number) {
 
 function clampPreviewOffsets(nextOffsetX: number, nextOffsetY: number, scale = previewScale.value) {
   const viewport = previewViewportElement.value
+  const image = previewImageElement.value
 
-  if (!viewport || scale <= 1) {
+  if (!viewport || !image || scale <= 1) {
     return { x: 0, y: 0 }
   }
 
-  const rect = viewport.getBoundingClientRect()
-  const maxOffsetX = ((rect.width * scale) - rect.width) / 2 + 24
-  const maxOffsetY = ((rect.height * scale) - rect.height) / 2 + 24
+  const viewportRect = viewport.getBoundingClientRect()
+  const imageRect = image.getBoundingClientRect()
+  const currentScale = previewScale.value || 1
+  const baseImageWidth = imageRect.width / currentScale
+  const baseImageHeight = imageRect.height / currentScale
+  const scaledImageWidth = baseImageWidth * scale
+  const scaledImageHeight = baseImageHeight * scale
+  const overscrollAllowance = 40
+  const maxOffsetX = Math.max(0, (scaledImageWidth - viewportRect.width) / 2) + overscrollAllowance
+  const maxOffsetY = Math.max(0, (scaledImageHeight - viewportRect.height) / 2) + overscrollAllowance
 
   return {
     x: Math.min(maxOffsetX, Math.max(-maxOffsetX, nextOffsetX)),
@@ -1147,6 +1156,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
             @wheel.prevent="handlePreviewWheel"
           >
             <img
+              ref="previewImageElement"
               :src="previewImageUrl"
               :alt="previewImageTitle"
               class="image-preview-image"
@@ -1529,7 +1539,6 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   max-height: calc(88vh - 44px);
   align-items: center;
   justify-content: center;
-  overflow: hidden;
   border-radius: 24px;
   cursor: grab;
   touch-action: none;

@@ -15,6 +15,10 @@ type GenerateResponse = {
 }
 
 type UploadResponse = {
+  uploadUrl: string
+  uploadMethod: 'PUT'
+  uploadHeaders: Record<string, string>
+  expiresAt: string
   url: string
   objectKey?: string
   requestId?: string
@@ -294,14 +298,19 @@ export function useNightImageGenerator() {
         preparedFileMeta = await prepareUploadFile(sourceFile.value)
         sourceFileHint.value = buildFileHint(preparedFileMeta.file, sourceFile.value)
 
-        const form = new FormData()
-        form.append('file', preparedFileMeta.file)
-        form.append('sessionId', activeSessionId)
-
         const uploadResponse = await $fetch<UploadResponse>('/api/upload', {
           method: 'POST',
-          body: form,
+          body: {
+            filename: preparedFileMeta.file.name,
+            contentType: preparedFileMeta.file.type,
+            size: preparedFileMeta.file.size,
+            sessionId: activeSessionId,
+          },
         })
+
+        taskStatus.value = '正在上传参考图到 OSS...'
+        loadingText.value = '上传中...'
+        await uploadFileToOSS(preparedFileMeta.file, uploadResponse)
 
         originalUrl = uploadResponse.url
         sourceRemoteUrl.value = uploadResponse.url
@@ -522,6 +531,83 @@ async function prepareUploadFile(file: File) {
   } finally {
     sourceBitmap.close()
   }
+}
+
+async function uploadFileToOSS(file: File, uploadResponse: UploadResponse) {
+  try {
+    const response = await fetch(uploadResponse.uploadUrl, {
+      method: uploadResponse.uploadMethod,
+      headers: uploadResponse.uploadHeaders,
+      body: file,
+    })
+
+    if (!response.ok) {
+      const details = await response.text().catch(() => '')
+      throw new Error(formatOSSHttpError(response.status, response.statusText, details, uploadResponse.expiresAt))
+    }
+  } catch (error) {
+    throw new Error(formatOSSErrorMessage(error, uploadResponse.expiresAt))
+  }
+}
+
+function formatOSSHttpError(status: number, statusText: string, details: string, expiresAt: string) {
+  const normalizedDetails = details.trim()
+
+  if (status === 403) {
+    if (/RequestTimeTooSkewed|Request has expired|AccessDenied|SignatureDoesNotMatch/i.test(normalizedDetails)) {
+      return `上传签名无效或已过期，请重试。签名有效期至：${formatOSSExpiresAt(expiresAt)}`
+    }
+
+    return 'OSS 拒绝了上传请求，请检查 Bucket 权限、Endpoint 和 CORS 配置'
+  }
+
+  if (status === 400 && /cors/i.test(normalizedDetails)) {
+    return 'OSS 跨域校验失败，请检查 Bucket CORS 配置是否包含当前站点域名'
+  }
+
+  return [
+    '上传 OSS 失败',
+    `${status} ${statusText}`.trim(),
+    normalizedDetails,
+  ].filter(Boolean).join('；')
+}
+
+function formatOSSErrorMessage(error: unknown, expiresAt: string) {
+  if (error instanceof Error) {
+    const message = error.message.trim()
+
+    if (/Failed to fetch/i.test(message)) {
+      return [
+        '浏览器连接 OSS 失败',
+        '请优先检查 Bucket CORS 是否放行当前域名',
+        '若 CORS 无误，再检查本地网络或代理设置',
+      ].join('；')
+    }
+
+    if (/NetworkError/i.test(message)) {
+      return '上传网络异常，请检查当前网络后重试'
+    }
+
+    if (/签名无效或已过期/.test(message)) {
+      return message
+    }
+
+    return message
+  }
+
+  return `上传 OSS 失败，请重试。签名有效期至：${formatOSSExpiresAt(expiresAt)}`
+}
+
+function formatOSSExpiresAt(expiresAt: string) {
+  const date = new Date(expiresAt)
+
+  if (Number.isNaN(date.getTime())) {
+    return expiresAt
+  }
+
+  return date.toLocaleString('zh-CN', {
+    hour12: false,
+  })
 }
 
 function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {

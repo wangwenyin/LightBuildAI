@@ -38,6 +38,13 @@ export type ValidatedUploadFile = {
   size: number
 }
 
+export type ValidatedUploadPrepareBody = {
+  sessionId?: string
+  filename: string
+  contentType: UploadMimeType
+  size: number
+}
+
 export function validateSessionId(value: unknown, fieldName = 'sessionId') {
   const sessionId = normalizeOptionalString(value, {
     fieldName,
@@ -163,6 +170,45 @@ export function validateUploadFile(file: {
     mimeType: detectedMimeType,
     size: file.data.byteLength,
   } satisfies ValidatedUploadFile
+}
+
+export function validateUploadPrepareBody(body: unknown): ValidatedUploadPrepareBody {
+  const normalizedBody = asRecord(body, '请求体格式不合法')
+  const sessionId = validateSessionId(normalizedBody.sessionId)
+  const filename = normalizeOptionalString(normalizedBody.filename, {
+    fieldName: 'filename',
+    maxLength: 255,
+    trim: true,
+  })
+  const contentType = normalizeOptionalString(normalizedBody.contentType, {
+    fieldName: 'contentType',
+    maxLength: 100,
+    trim: true,
+  })
+  const size = normalizeOptionalInteger(normalizedBody.size, 'size')
+
+  if (!filename) {
+    throw badRequest('filename 不能为空')
+  }
+
+  if (!contentType || !ALLOWED_UPLOAD_MIME_TYPES.includes(contentType as UploadMimeType)) {
+    throw badRequest('仅支持 jpg、png、webp、gif 图片上传')
+  }
+
+  if (!size) {
+    throw badRequest('size 不能为空')
+  }
+
+  if (size > MAX_UPLOAD_FILE_BYTES) {
+    throw badRequest(`上传文件不能超过 ${Math.floor(MAX_UPLOAD_FILE_BYTES / 1024 / 1024)}MB`)
+  }
+
+  return {
+    sessionId,
+    filename,
+    contentType: contentType as UploadMimeType,
+    size,
+  }
 }
 
 function normalizeChatHistory(history: unknown) {

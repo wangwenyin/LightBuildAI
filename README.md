@@ -41,6 +41,44 @@ If the generate API reports missing Tencent Cloud credentials, check whether `.e
 
 If image generation is slow, increase `HUNYUAN_MAX_POLL_DURATION_MS`. The default is `300000` milliseconds (5 minutes).
 
+## OSS Direct Upload
+
+This project now uses browser direct upload for reference images when OSS is configured:
+
+```txt
+Browser -> /api/upload (get signed PUT URL) -> Browser PUT to OSS -> /api/generate
+```
+
+This avoids proxying file bytes through Vercel Functions, which is more stable for OSS buckets in mainland China.
+
+Required OSS environment variables:
+
+```env
+OSS_REGION=oss-cn-guangzhou
+OSS_ACCESS_KEY_ID=your_oss_access_key_id
+OSS_ACCESS_KEY_SECRET=your_oss_access_key_secret
+OSS_BUCKET=your_oss_bucket
+OSS_ENDPOINT=
+OSS_DIR=uploads
+```
+
+### OSS CORS
+
+CORS must be configured in the Alibaba Cloud OSS console. Environment variables alone are not enough.
+
+Recommended CORS values:
+
+| Item | Value |
+|---|---|
+| AllowedOrigin | `http://localhost:3000` |
+| AllowedOrigin | `https://ai.winghouse.xyz` |
+| AllowedMethod | `PUT,GET,HEAD,OPTIONS` |
+| AllowedHeader | `Content-Type,Origin,Accept,x-oss-*` |
+| ExposeHeader | `ETag,x-oss-request-id` |
+| MaxAgeSeconds | `3600` |
+
+If your local dev server uses another port, replace `http://localhost:3000` with the actual local origin.
+
 ## Deploy to Vercel
 
 This is a Nuxt 3 SSR app. Vercel can detect the Nuxt build automatically.
@@ -57,12 +95,12 @@ This is a Nuxt 3 SSR app. Vercel can detect the Nuxt build automatically.
    - `TENCENTCLOUD_REGION`
    - `TOKENHUB_API_KEY_IMAGE`
    - `TOKENHUB_API_KEY_CHAT`
-   - `OSS_REGION` optional
-   - `OSS_ACCESS_KEY_ID` optional
-   - `OSS_ACCESS_KEY_SECRET` optional
-   - `OSS_BUCKET` optional
+   - `OSS_REGION`
+   - `OSS_ACCESS_KEY_ID`
+   - `OSS_ACCESS_KEY_SECRET`
+   - `OSS_BUCKET`
    - `OSS_ENDPOINT` optional
    - `OSS_DIR` optional
    - `HUNYUAN_MAX_POLL_DURATION_MS` optional
 
-Vercel serverless functions do not provide persistent public file storage. If OSS variables are configured, uploads are stored in OSS and TokenHub receives the OSS URL. If OSS variables are not configured, uploads are sent to TokenHub as a Base64 data URL, which works for the current 1MB compressed reference image flow. Local development still falls back to `public/uploads` when OSS variables are not configured.
+Vercel serverless functions do not provide persistent public file storage. With the current direct upload flow, OSS variables should be configured in Vercel for reference image upload to work correctly.

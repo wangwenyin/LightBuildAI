@@ -3,8 +3,9 @@ import path from 'node:path'
 import { createHmac, randomUUID } from 'node:crypto'
 
 const publicDir = path.join(process.cwd(), 'public')
+const DEFAULT_UPLOAD_URL_EXPIRES_IN_SECONDS = 15 * 60
 
-type OssRuntimeConfig = {
+export type OssRuntimeConfig = {
   ossRegion?: string
   ossAccessKeyId?: string
   ossAccessKeySecret?: string
@@ -63,6 +64,44 @@ export async function uploadOSS(buffer: Buffer, filename: string, config: OssRun
   await fs.writeFile(destination, buffer)
 
   return `/${['uploads', ...normalizedRelativePath].map(segment => encodeURIComponent(segment)).join('/')}`
+}
+
+export function createSignedOSSUploadUrl(
+  objectKey: string,
+  config: OssRuntimeConfig = {},
+  options: {
+    contentType?: string
+    expiresInSeconds?: number
+  } = {},
+) {
+  if (!hasOssConfig(config)) {
+    throw new Error('缺少 OSS 配置，无法生成上传签名地址')
+  }
+
+  const normalizedObjectKey = objectKey.replace(/^\/+/, '')
+  const endpoint = normalizeEndpoint(config)
+  const contentType = options.contentType || detectContentType(normalizedObjectKey)
+  const expires = Math.floor(Date.now() / 1000) + (options.expiresInSeconds || DEFAULT_UPLOAD_URL_EXPIRES_IN_SECONDS)
+  const resource = `/${config.ossBucket}/${normalizedObjectKey}`
+  const signature = createOssSignature({
+    method: 'PUT',
+    contentType,
+    date: String(expires),
+    resource,
+    accessKeySecret: config.ossAccessKeySecret!,
+  })
+  const url = new URL(`https://${config.ossBucket}.${endpoint}/${encodeObjectPath(normalizedObjectKey)}`)
+  url.searchParams.set('OSSAccessKeyId', config.ossAccessKeyId!)
+  url.searchParams.set('Expires', String(expires))
+  url.searchParams.set('Signature', signature)
+
+  return {
+    uploadUrl: url.toString(),
+    headers: {
+      'Content-Type': contentType,
+    },
+    expiresAt: new Date(expires * 1000).toISOString(),
+  }
 }
 
 export async function downloadOSSObject(objectKey: string, config: OssRuntimeConfig = {}) {
@@ -128,6 +167,19 @@ export function createSignedOSSUrl(
   return url.toString()
 }
 
+export function createOSSObjectUrl(
+  objectKey: string,
+  config: OssRuntimeConfig = {},
+) {
+  if (!hasOssConfig(config)) {
+    throw new Error('缺少 OSS 配置，无法生成对象地址')
+  }
+
+  const normalizedObjectKey = objectKey.replace(/^\/+/, '')
+  const endpoint = normalizeEndpoint(config)
+  return `https://${config.ossBucket}.${endpoint}/${encodeObjectPath(normalizedObjectKey)}`
+}
+
 export function extractObjectKeyFromOSSUrl(url: string, config: OssRuntimeConfig = {}) {
   const normalizedDir = normalizeObjectDir(config.ossDir)
   const normalizedInput = url.trim()
@@ -164,7 +216,7 @@ export function extractObjectKeyFromOSSUrl(url: string, config: OssRuntimeConfig
   return null
 }
 
-function hasOssConfig(config: OssRuntimeConfig) {
+export function hasOssConfig(config: OssRuntimeConfig) {
   return Boolean(
     config.ossRegion
     && config.ossAccessKeyId

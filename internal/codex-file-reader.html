@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex File Reader</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        background: #111827;
+        color: #e5e7eb;
+      }
+
+      label {
+        display: inline-block;
+        margin-bottom: 16px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        background: #1f2937;
+        cursor: pointer;
+      }
+
+      input {
+        display: none;
+      }
+
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.5;
+        padding: 20px;
+        border-radius: 12px;
+        background: #030712;
+        border: 1px solid #374151;
+      }
+    </style>
+  </head>
+  <body>
+    <label for="file">选择文件</label>
+    <input id="file" type="file" />
+    <pre id="content">等待选择文件...</pre>
+
+    <script>
+      const input = document.getElementById('file')
+      const content = document.getElementById('content')
+
+      input.addEventListener('change', async (event) => {
+        const file = event.target.files?.[0]
+        if (!file) {
+          content.textContent = '未选择文件'
+          return
+        }
+
+        content.textContent = await file.text()
+      })
+    </script>
+  </body>
+  </html>

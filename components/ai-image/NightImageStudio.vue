@@ -141,8 +141,7 @@ const previewImageTitle = computed(() => {
   return '图片预览'
 })
 const trimmedPromptLength = computed(() => customPrompt.value.trim().length)
-const remainingPromptLength = computed(() => MAX_CUSTOM_PROMPT_LENGTH - trimmedPromptLength.value)
-const isPromptTooLong = computed(() => remainingPromptLength.value < 0)
+const isPromptTooLong = computed(() => trimmedPromptLength.value > MAX_CUSTOM_PROMPT_LENGTH)
 
 onMounted(() => {
   setupMobileViewportWatcher()
@@ -1099,9 +1098,6 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
           />
 
           <div class="prompt-meta">
-            <p class="prompt-meta-text" :class="{ 'prompt-meta-text--error': isPromptTooLong }">
-              {{ isPromptTooLong ? `已超出 ${Math.abs(remainingPromptLength)} 字` : `还可输入 ${remainingPromptLength} 字` }}
-            </p>
             <p class="prompt-meta-count" :class="{ 'prompt-meta-count--error': isPromptTooLong }">
               {{ trimmedPromptLength }} / {{ MAX_CUSTOM_PROMPT_LENGTH }}
             </p>
@@ -1167,11 +1163,12 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
               @pointercancel="handlePreviewPointerUp"
             >
           </div>
-          <figcaption class="image-preview-caption">
-            {{ previewImageTitle }}
-            <span class="image-preview-caption-meta">{{ previewScaleLabel }}</span>
-          </figcaption>
         </figure>
+
+        <figcaption class="image-preview-caption">
+          {{ previewImageTitle }}
+          <span class="image-preview-caption-meta">{{ previewScaleLabel }}</span>
+        </figcaption>
 
         <button
           v-if="previewScale > 1"
@@ -1512,6 +1509,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   position: fixed;
   inset: 0;
   z-index: 40;
+  isolation: isolate;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1524,19 +1522,20 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 
 .image-preview-frame {
   position: relative;
+  z-index: 1;
   display: flex;
   max-width: min(92vw, 1440px);
-  max-height: 88vh;
+  max-height: calc(88vh - 72px);
   margin: 0;
   flex-direction: column;
-  gap: 14px;
 }
 
 .image-preview-viewport {
   position: relative;
+  z-index: 1;
   display: flex;
   max-width: min(92vw, 1440px);
-  max-height: calc(88vh - 44px);
+  max-height: calc(88vh - 72px);
   align-items: center;
   justify-content: center;
   border-radius: 24px;
@@ -1549,9 +1548,11 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 }
 
 .image-preview-image {
+  position: relative;
+  z-index: 1;
   display: block;
   max-width: 100%;
-  max-height: calc(88vh - 44px);
+  max-height: calc(88vh - 72px);
   border-radius: 24px;
   background: rgba(15, 23, 42, 0.72);
   box-shadow:
@@ -1566,15 +1567,27 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 }
 
 .image-preview-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  z-index: 4;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
+  max-width: min(calc(100vw - 40px), 720px);
+  padding: 10px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.52);
+  backdrop-filter: blur(16px);
   color: rgba(248, 250, 252, 0.88);
   font-size: 13px;
   letter-spacing: 0.12em;
   text-align: center;
   text-transform: uppercase;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 
 .image-preview-caption-meta {
@@ -1584,6 +1597,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 
 .image-preview-close {
   position: absolute;
+  z-index: 4;
   top: 20px;
   right: 20px;
   width: 44px;
@@ -1608,6 +1622,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 
 .image-preview-reset {
   position: absolute;
+  z-index: 4;
   right: 76px;
   top: 20px;
   min-width: 64px;
@@ -1724,12 +1739,11 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 .prompt-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   margin-top: 10px;
 }
 
-.prompt-meta-text,
 .prompt-meta-count {
   margin: 0;
   color: #78716c;
@@ -1742,7 +1756,6 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   font-variant-numeric: tabular-nums;
 }
 
-.prompt-meta-text--error,
 .prompt-meta-count--error {
   color: #b45309;
 }

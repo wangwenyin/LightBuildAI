@@ -114,20 +114,45 @@ function summarizeHunyuanTextToImageSubmitParams(params: {
   }
 }
 
+const HUNYUAN_TEXT_TO_IMAGE_RESOLUTION_CANDIDATES = [
+  '1024:768',
+  '1024:1024',
+  '768:1024',
+] as const
+
 function buildHunyuanTextToImageResolution(width?: number, height?: number) {
+  return pickClosestResolution(width, height, HUNYUAN_TEXT_TO_IMAGE_RESOLUTION_CANDIDATES, '1024:1024')
+}
+
+function pickClosestResolution(
+  width: number | undefined,
+  height: number | undefined,
+  candidates: readonly string[],
+  fallback: string,
+) {
   if (!width || !height) {
-    return '1024:1024'
+    return fallback
   }
 
   const ratio = width / height
+  let bestResolution = fallback
+  let bestDistance = Number.POSITIVE_INFINITY
 
-  if (ratio > 1.15) {
-    return '1024:768'
+  for (const candidate of candidates) {
+    const [candidateWidth, candidateHeight] = candidate.split(':').map(Number)
+
+    if (!candidateWidth || !candidateHeight) {
+      continue
+    }
+
+    const candidateRatio = candidateWidth / candidateHeight
+    const distance = Math.abs(Math.log(ratio / candidateRatio))
+
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestResolution = candidate
+    }
   }
 
-  if (ratio < 0.87) {
-    return '768:1024'
-  }
-
-  return '1024:1024'
+  return bestResolution
 }

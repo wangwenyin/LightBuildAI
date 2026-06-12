@@ -350,38 +350,51 @@ function normalizeTokenHubMimeType(contentType: string) {
   return 'image/jpeg'
 }
 
+const TOKENHUB_RESOLUTION_CANDIDATES = [
+  '2048:512',
+  '1280:720',
+  '1024:768',
+  '1024:1024',
+  '768:1024',
+  '720:1280',
+  '512:2048',
+] as const
+
 function buildTokenHubResolution(width?: number, height?: number) {
+  return pickClosestResolution(width, height, TOKENHUB_RESOLUTION_CANDIDATES, '1024:1024')
+}
+
+function pickClosestResolution(
+  width: number | undefined,
+  height: number | undefined,
+  candidates: readonly string[],
+  fallback: string,
+) {
   if (!width || !height) {
-    return '1024:1024'
+    return fallback
   }
 
   const ratio = width / height
+  let bestResolution = fallback
+  let bestDistance = Number.POSITIVE_INFINITY
 
-  if (ratio >= 3.2) {
-    return '2048:512'
+  for (const candidate of candidates) {
+    const [candidateWidth, candidateHeight] = candidate.split(':').map(Number)
+
+    if (!candidateWidth || !candidateHeight) {
+      continue
+    }
+
+    const candidateRatio = candidateWidth / candidateHeight
+    const distance = Math.abs(Math.log(ratio / candidateRatio))
+
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestResolution = candidate
+    }
   }
 
-  if (ratio >= 1.55) {
-    return '1280:720'
-  }
-
-  if (ratio >= 1.2) {
-    return '1024:768'
-  }
-
-  if (ratio <= 0.31) {
-    return '512:2048'
-  }
-
-  if (ratio <= 0.68) {
-    return '720:1280'
-  }
-
-  if (ratio <= 0.84) {
-    return '768:1024'
-  }
-
-  return '1024:1024'
+  return bestResolution
 }
 
 function createSeed() {

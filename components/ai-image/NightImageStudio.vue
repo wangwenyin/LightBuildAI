@@ -29,12 +29,15 @@ const {
   historySourceImageUrl,
   isFailed,
   isLoading,
+  isPollingPaused,
   lastErrorMessage,
   loadingText,
   onFileChange,
+  pausePolling,
   primaryActionLabel,
   resetGenerator,
   resumePendingTask,
+  resumePolling,
   restoreHistorySnapshot,
   resultUrl,
   sessionId,
@@ -119,15 +122,21 @@ const recentRecords = computed(() => records.value.map(record => ({
   meta: formatRelativeTime(record.updatedAt),
 })))
 const selectedHistoryId = computed(() => activeHistoryId.value || draftHistoryId.value)
+const isGenerationAnimating = computed(() => isLoading.value && hasSourceImage.value && !isPollingPaused.value)
 
 const stageFrameClasses = computed(() => ({
-  'image-stage--loading': isLoading.value && hasSourceImage.value,
+  'image-stage--loading': isGenerationAnimating.value,
 }))
 
 const imageWrapperClasses = computed(() => ({
   'image-wrapper--result': activeView.value === 'result' && hasResultImage.value,
   'image-wrapper--reveal': shouldAnimateResultReveal.value && activeView.value === 'result' && hasResultImage.value,
 }))
+const isGenerateDisabled = computed(() => (
+  isRestoringHistory.value
+  || isPromptTooLong.value
+  || (!isLoading.value && !hasSourceImage.value)
+))
 const previewImageUrl = computed(() => displayedImageUrl.value || '')
 const previewImageTitle = computed(() => {
   if (activeView.value === 'result' && hasResultImage.value) {
@@ -751,6 +760,20 @@ async function handleGenerate() {
       draftHistoryId.value = createHistoryId()
     }
 
+    if (!isLoading.value && !hasSourceImage.value) {
+      return
+    }
+
+    if (isLoading.value) {
+      if (isPollingPaused.value) {
+        await resumePolling()
+      } else {
+        pausePolling()
+      }
+
+      return
+    }
+
     await generateNightImage()
     activeHistoryId.value = draftHistoryId.value
 
@@ -791,7 +814,12 @@ function restoreImageDraft() {
     sourceImageUrl: draft.sourceImageUrl,
     status: draft.status,
     taskId: draft.currentTaskId,
+    isPaused: draft.isPaused,
   })
+
+  if (draft.isPaused) {
+    return
+  }
 
   if (draft.currentTaskId && !draft.resultImageUrl && !draft.status.startsWith('失败')) {
     void resumePendingTask(draft.currentTaskId, draft.sessionId)
@@ -827,6 +855,7 @@ function restoreImageDraft() {
         sourceImageUrl: nextSourceImageUrl,
         status: draft.status,
         taskId: draft.currentTaskId,
+        isPaused: draft.isPaused,
       })
     } catch {
       // 草稿恢复失败时保持本地快照，避免阻断页面加载。
@@ -857,6 +886,7 @@ function persistImageDraft() {
     currentTaskId: currentTaskId.value,
     draftHistoryId: draftHistoryId.value,
     errorMessage: lastErrorMessage.value,
+    isPaused: isPollingPaused.value,
     loadingText: loadingText.value,
     prompt: customPrompt.value,
     resultImageUrl: historyResultImageUrl.value,
@@ -1026,7 +1056,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
                 <img :src="displayedImageUrl" :alt="stageTitle" class="stage-image">
               </button>
 
-              <div v-if="isLoading && hasSourceImage" class="curtain-overlay" aria-hidden="true">
+              <div v-if="isGenerationAnimating" class="curtain-overlay" aria-hidden="true">
                 <div class="curtain-sweep" />
                 <div class="curtain-glow" />
                 <div class="curtain-caption">
@@ -1107,7 +1137,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
             <button
               class="primary-button ui-button-reset ui-interactive-lift ui-disabled"
               type="button"
-              :disabled="isLoading || isRestoringHistory || isPromptTooLong"
+              :disabled="isGenerateDisabled"
               @click="handleGenerate"
             >
               {{ primaryActionLabel }}

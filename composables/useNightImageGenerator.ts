@@ -79,6 +79,7 @@ export function useNightImageGenerator() {
   const currentTaskId = shallowRef('')
   const activeView = shallowRef<'source' | 'result'>('source')
   const isLoading = shallowRef(false)
+  const isPollingPaused = shallowRef(false)
   const lastErrorMessage = shallowRef('')
 
   const hasSourceImage = computed(() => Boolean(sourcePreviewUrl.value))
@@ -110,7 +111,15 @@ export function useNightImageGenerator() {
   })
   const primaryActionLabel = computed(() => {
     if (isLoading.value) {
+      if (currentTaskId.value) {
+        return isPollingPaused.value ? '继续生成' : '暂停生成'
+      }
+
       return loadingText.value
+    }
+
+    if (isPollingPaused.value && currentTaskId.value) {
+      return '继续生成'
     }
 
     if (isFailed.value) {
@@ -193,6 +202,7 @@ export function useNightImageGenerator() {
     activeView?: 'source' | 'result'
     errorMessage?: string
     loadingText?: string
+    isPaused?: boolean
   }) {
     sourceFile.value = null
     sourceRemoteUrl.value = snapshot.sourceImageUrl?.trim() || ''
@@ -213,6 +223,7 @@ export function useNightImageGenerator() {
     revisedPrompt.value = ''
     sourceFileHint.value = ''
     loadingText.value = snapshot.loadingText?.trim() || '生成中...'
+    isPollingPaused.value = snapshot.isPaused ?? false
     activeView.value = snapshot.activeView || (resultUrl.value ? 'result' : 'source')
   }
 
@@ -258,7 +269,19 @@ export function useNightImageGenerator() {
         reviseRequested: revisePrompt.value,
       })
       loadingText.value = '生成中...'
-      resultUrl.value = await pollTask(normalizedTaskId, normalizedSessionId, taskStatus, revisedPrompt)
+      const nextResultUrl = await pollTask(
+        normalizedTaskId,
+        normalizedSessionId,
+        taskStatus,
+        revisedPrompt,
+        isPollingPaused,
+      )
+
+      if (!nextResultUrl) {
+        return
+      }
+
+      resultUrl.value = nextResultUrl
       activeView.value = 'result'
       taskStatus.value = '生成完成'
     } catch (error) {
@@ -277,6 +300,7 @@ export function useNightImageGenerator() {
     resultUrl.value = ''
     taskStatus.value = sourceFile.value ? '正在上传原图...' : '正在提交生成任务...'
     loadingText.value = sourceFile.value ? '上传中...' : '提交任务中...'
+    isPollingPaused.value = false
     currentTaskId.value = ''
     currentProvider.value = ''
     currentRequestId.value = ''
@@ -355,7 +379,19 @@ export function useNightImageGenerator() {
       if (generateResponse.imageUrl) {
         resultUrl.value = generateResponse.imageUrl
       } else {
-        resultUrl.value = await pollTask(generateResponse.taskId, activeSessionId, taskStatus, revisedPrompt)
+        const nextResultUrl = await pollTask(
+          generateResponse.taskId,
+          activeSessionId,
+          taskStatus,
+          revisedPrompt,
+          isPollingPaused,
+        )
+
+        if (nextResultUrl) {
+          resultUrl.value = nextResultUrl
+        } else {
+          return
+        }
       }
 
       activeView.value = 'result'
@@ -409,6 +445,33 @@ export function useNightImageGenerator() {
     }
   }
 
+  function pausePolling() {
+    if (!isLoading.value || !currentTaskId.value || isPollingPaused.value) {
+      return
+    }
+
+    isPollingPaused.value = true
+    taskStatus.value = `生成已暂停，任务号：${currentTaskId.value}`
+    loadingText.value = '继续生成'
+  }
+
+  async function resumePolling() {
+    if (!currentTaskId.value || !isPollingPaused.value) {
+      return
+    }
+
+    isPollingPaused.value = false
+    loadingText.value = '生成中...'
+    taskStatus.value = `继续轮询任务：${currentTaskId.value}`
+
+    if (!isLoading.value) {
+      await resumePendingTask(currentTaskId.value, sessionId.value || ensureSessionId())
+      return
+    }
+
+    loadingText.value = '生成中...'
+  }
+
   return {
     activeView,
     copyTaskId,
@@ -432,10 +495,13 @@ export function useNightImageGenerator() {
     isFailed,
     lastErrorMessage,
     loadingText,
+    isPollingPaused,
     onFileChange,
     primaryActionLabel,
+    pausePolling,
     resetGenerator,
     resumePendingTask,
+    resumePolling,
     restoreHistorySnapshot,
     sourceFileHint,
     revisedPrompt,
@@ -692,8 +758,17 @@ async function pollTask(
   sessionId: string,
   taskStatus: { value: string },
   revisedPrompt: { value: string },
+  isPaused: { value: boolean },
 ) {
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
+    if (isPaused.value) {
+      taskStatus.value = `生成已暂停，任务号：${taskId}`
+      while (isPaused.value) {
+        await sleep(1000)
+      }
+      taskStatus.value = buildPollingStatus(attempt, MAX_POLL_ATTEMPTS)
+    }
+
     await sleep(POLL_INTERVAL_MS)
 
     const task = await $fetch<TaskResponse>('/api/task', {

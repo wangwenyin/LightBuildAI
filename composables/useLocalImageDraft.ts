@@ -4,6 +4,7 @@ export type LocalImageDraft = {
   currentTaskId: string
   draftHistoryId: string
   errorMessage: string
+  isPaused: boolean
   loadingText: string
   prompt: string
   resultImageUrl: string
@@ -60,6 +61,7 @@ export function useLocalImageDraft() {
         currentTaskId: typeof parsed.currentTaskId === 'string' ? parsed.currentTaskId : '',
         draftHistoryId: typeof parsed.draftHistoryId === 'string' ? parsed.draftHistoryId : '',
         errorMessage: typeof parsed.errorMessage === 'string' ? parsed.errorMessage : '',
+        isPaused: parsed.isPaused === true,
         loadingText: typeof parsed.loadingText === 'string' ? parsed.loadingText : '生成中...',
         prompt: typeof parsed.prompt === 'string' ? parsed.prompt : '',
         resultImageUrl: typeof parsed.resultImageUrl === 'string' ? normalizePersistedImageUrl(parsed.resultImageUrl) : '',

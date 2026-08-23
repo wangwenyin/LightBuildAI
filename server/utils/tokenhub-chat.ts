@@ -2,7 +2,7 @@ import { createError } from 'h3'
 import { createUpstreamError, parseJsonResponse } from './hunyuan-shared'
 
 const TOKENHUB_CHAT_URL = 'https://tokenhub.tencentmaas.com/v1/chat/completions'
-const TOKENHUB_CHAT_MODEL = 'deepseek-v4-pro'
+const TOKENHUB_CHAT_MODEL = 'deepseek-v4-flash'
 
 export type TokenHubChatMessage = {
   role: 'system' | 'user' | 'assistant'

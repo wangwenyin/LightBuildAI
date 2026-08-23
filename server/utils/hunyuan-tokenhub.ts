@@ -12,7 +12,7 @@ import { downloadOSSObject } from './oss'
 const MAX_REFERENCE_IMAGE_BYTES = 1024 * 1024
 const TOKENHUB_SUBMIT_URL = 'https://tokenhub.tencentmaas.com/v1/api/image/submit'
 const TOKENHUB_QUERY_URL = 'https://tokenhub.tencentmaas.com/v1/api/image/query'
-const TOKENHUB_MODEL = 'hy-image-v3.0'
+const TOKENHUB_MODEL = 'hy-image-v3'
 
 export async function submitTokenHubReferenceImageJob({
   originalUrl,

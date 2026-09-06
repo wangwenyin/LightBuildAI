@@ -10,9 +10,25 @@ import {
 import { downloadOSSObject } from './oss'
 
 const MAX_REFERENCE_IMAGE_BYTES = 1024 * 1024
-const TOKENHUB_SUBMIT_URL = 'https://tokenhub.tencentmaas.com/v1/api/image/submit'
-const TOKENHUB_QUERY_URL = 'https://tokenhub.tencentmaas.com/v1/api/image/query'
+/**
+ * 混元生图 Hy-Image-3.0（model=hy-image-v3）是**同步接口**：
+ * POST /v1/wand/hunyuan-image/v3-generation 一次请求直接返回图片 URL，无需 submit+query。
+ *
+ * 注意与**异步**接口 /v1/api/image/submit（对应 hy-image-v3.0 模型）的区别——
+ * 代码历史上错误地把同步模型名 hy-image-v3 配到了异步端点，导致
+ * "请求中的模型或服务 ID hy-image-v3 不存在" 报错（400004）。
+ *
+ * 详见官方文档：
+ * - https://cloud.tencent.com/document/product/1823/135745（同步 Hy 生图调用指南）
+ * - https://cloud.tencent.com/document/product/1823/135744（图像生成模型调用概览）
+ */
+const TOKENHUB_GENERATE_URL = 'https://tokenhub.tencentmaas.com/v1/wand/hunyuan-image/v3-generation'
 const TOKENHUB_MODEL = 'hy-image-v3'
+// 同步生图通常 10-30s，少数情况下会到 60s+。设 90s 作为服务端兜底超时。
+// 注意：Vercel Serverless Function 的 maxDuration 必须 >= 此值；
+// 当前 vercel.json 已配置 server/api/generate.post.ts 的 maxDuration=60，
+// 如果遇到 504，请把 vercel.json 里该端点的 maxDuration 调到 120 或 300（Pro plan）。
+const TOKENHUB_SYNC_TIMEOUT_MS = 90_000
 
 export async function submitTokenHubReferenceImageJob({
   originalUrl,
@@ -45,100 +61,6 @@ export async function submitTokenHubReferenceImageJob({
   ossBucket?: string
   ossEndpoint?: string
 }): Promise<SubmitNightImageJobResult> {
-  const image = await createTokenHubImageInput(originalUrl, {
-    publicOrigin,
-    originalObjectKey,
-    ossRegion,
-    ossAccessKeyId,
-    ossAccessKeySecret,
-    ossBucket,
-    ossEndpoint,
-  })
-  const resolution = buildTokenHubResolution(imageWidth, imageHeight)
-  const seed = createSeed()
-  const payload = {
-    model: TOKENHUB_MODEL,
-    prompt: buildReferenceImagePrompt(prompt),
-    images: [image],
-    Resolution: resolution,
-    extra_body: {
-      seed,
-      revise: revise === false ? false : true,
-    },
-    ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
-  }
-
-  console.log('TokenHub submit params:', summarizeTokenHubSubmitParams(payload))
-
-  const response = await fetch(TOKENHUB_SUBMIT_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${tokenHubApiKey}`,
-    },
-    body: JSON.stringify(payload),
-  })
-
-  const data = await parseJsonResponse(response)
-
-  // TokenHub 部分错误会用 HTTP 200 + {"error": {...}} 返回（而非 4xx），
-  // 必须在「响应正常」时也检测 error 字段，否则会被后面的兜底逻辑当成 [unhandled] 抛出。
-  if (!response.ok || data?.error) {
-    throw createUpstreamError(
-      response.status || 502,
-      extractTokenHubErrorMessage(data, 'TokenHub 提交任务失败'),
-      data,
-    )
-  }
-
-  const taskId = readTokenHubTaskId(data)
-  const imageUrl = readTokenHubImageUrl(data)
-  const status = readTokenHubTaskStatus(data)
-  const requestId = readTokenHubRequestId(data)
-
-  if (taskId) {
-    return {
-      jobId: `tokenhub:${taskId}`,
-      imageUrl: undefined,
-      requestId,
-      provider: 'tokenhub-reference-image' as const,
-      seed,
-      size: resolution,
-    }
-  }
-
-  // Some submit responses may complete synchronously and return the final image directly.
-  if (imageUrl) {
-    return {
-      jobId: `tokenhub:completed:${requestId || createSeed()}`,
-      imageUrl,
-      requestId,
-      provider: 'tokenhub-reference-image' as const,
-      seed,
-      size: resolution,
-    }
-  }
-
-  // HTTP 200 但既无任务 ID 也无图片地址：说明上游返回结构发生了变化（常见于模型从异步切同步、或字段改名）。
-  // 记录完整原始响应，便于对照真实字段名修正解析逻辑。
-  console.error('[tokenhub] submit 返回了无法识别的结构（HTTP 200 但既无任务 ID 也无图片地址）:', {
-    status,
-    requestId,
-    raw: JSON.stringify(data).slice(0, 1500),
-  })
-
-  const submitErrorMessage = extractTokenHubErrorMessage(data, 'TokenHub 提交任务失败')
-  const details = [
-    `TokenHub 未返回任务 ID，状态：${status || 'unknown'}`,
-    submitErrorMessage,
-    requestId ? `请求 ID：${requestId}` : '',
-    '服务端已记录完整原始响应，请把 Vercel 日志里 [tokenhub] 的 raw 字段发我，我据此对齐字段名',
-  ].filter(Boolean)
-
-  throw createUpstreamError(502, details.join('；'), data)
-}
-
-export async function queryTokenHubImageJob(taskId: string, tokenHubApiKey?: string): Promise<QueryNightImageJobResult> {
   if (!tokenHubApiKey) {
     throw createError({
       statusCode: 500,
@@ -149,65 +71,121 @@ export async function queryTokenHubImageJob(taskId: string, tokenHubApiKey?: str
     })
   }
 
-  const response = await fetch(TOKENHUB_QUERY_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${tokenHubApiKey}`,
-    },
-    body: JSON.stringify({
-      model: TOKENHUB_MODEL,
-      id: taskId,
-    }),
+  const image = await createTokenHubImageInput(originalUrl, {
+    publicOrigin,
+    originalObjectKey,
+    ossRegion,
+    ossAccessKeyId,
+    ossAccessKeySecret,
+    ossBucket,
+    ossEndpoint,
   })
-
-  const data = await parseJsonResponse(response)
-
-  if (!response.ok || data?.error) {
-    throw createUpstreamError(
-      response.status || 502,
-      extractTokenHubErrorMessage(data, 'TokenHub 查询任务失败'),
-      data,
-    )
+  const size = buildTokenHubSize(imageWidth, imageHeight)
+  const seed = createSeed()
+  // 同步接口官方字段：model / prompt / images / size / seed / revise / negative_prompt
+  // 注意 size 格式是 `${宽}x${高}`（如 `1024x1024`），不是 `${宽}:${高}`。
+  const payload = {
+    model: TOKENHUB_MODEL,
+    prompt: buildReferenceImagePrompt(prompt),
+    images: [image],
+    size,
+    seed,
+    revise: revise === false ? 0 : 1,
+    ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
   }
 
-  const status = readTokenHubTaskStatus(data)
-  const imageUrl = readTokenHubImageUrl(data)
-  const revisedPrompt = readTokenHubRevisedPrompt(data)
-  const requestId = readTokenHubRequestId(data)
+  console.log('[tokenhub] sync generate params:', summarizeSyncParams(payload))
 
-  if (status === 'completed' || status === 'succeeded' || status === 'succeed') {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TOKENHUB_SYNC_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(TOKENHUB_GENERATE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tokenHubApiKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    })
+
+    const data = await parseJsonResponse(response)
+
+    // TokenHub 部分错误会用 HTTP 200 + {"error": {...}} 返回（而非 4xx），
+    // 必须在「响应正常」时也检测 error 字段，否则会被后面的兜底逻辑当成 [unhandled] 抛出。
+    if (!response.ok || data?.error) {
+      throw createUpstreamError(
+        response.status || 502,
+        extractTokenHubErrorMessage(data, 'TokenHub 同步生图失败'),
+        data,
+      )
+    }
+
+    const imageUrl = readSyncImageUrl(data)
+    const revisedPrompt = readSyncRevisedPrompt(data)
+    const requestId = readSyncRequestId(data)
+
     if (!imageUrl) {
-      console.error('[tokenhub] 任务已完成但未返回图片地址:', JSON.stringify(data).slice(0, 1500))
-      throw createUpstreamError(502, 'TokenHub 任务已完成，但未返回图片地址', data)
+      console.error('[tokenhub] sync generate 响应中未包含图片:', JSON.stringify(data).slice(0, 1500))
+      throw createUpstreamError(502, 'TokenHub 同步生图成功，但响应中未包含图片 URL', data)
     }
 
     return {
-      status: 'done' as const,
+      jobId: `tokenhub-sync:${requestId || createSeed()}`,
       imageUrl,
-      revisedPrompt,
-      statusCode: status,
-      statusMessage: 'TokenHub 任务已完成',
       requestId,
+      provider: 'tokenhub-reference-image' as const,
+      seed,
+      size,
     }
-  }
+  } catch (error) {
+    // 已经格式化的 H3 错误直接抛出，便于前端拿到具体消息。
+    if (error && typeof error === 'object' && 'statusCode' in error) {
+      throw error
+    }
 
-  if (status === 'failed') {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw createError({
+        statusCode: 504,
+        statusMessage: `TokenHub 同步生图超时（${TOKENHUB_SYNC_TIMEOUT_MS / 1000}s）。请稍后重试，或换一张更小的参考图。`,
+        data: {
+          message: `TokenHub 同步生图超时（${TOKENHUB_SYNC_TIMEOUT_MS / 1000}s）。请稍后重试，或换一张更小的参考图。`,
+        },
+      })
+    }
+
+    const message = error instanceof Error ? error.message : String(error)
+    throw createError({
+      statusCode: 500,
+      statusMessage: `TokenHub 同步生图失败：${message}`,
+      data: {
+        message: `TokenHub 同步生图失败：${message}`,
+      },
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * 同步通道下，/api/generate 已经在响应里返回 imageUrl，前端不会再轮询。
+ * 保留此函数仅为了兼容旧的调用入口（queryNightImageJob / /api/task）：
+ * - `tokenhub-sync:*` 任务表示同步通道已完成，结果已在 /api/generate 响应中给出，
+ *   无需再 query，返回 failed（带说明），前端拿到后会退出轮询。
+ * - 其他前缀视为历史异步通道残留：返回 done，让前端退出轮询。
+ */
+export async function queryTokenHubImageJob(taskId: string, _tokenHubApiKey?: string): Promise<QueryNightImageJobResult> {
+  if (taskId.startsWith('tokenhub-sync:')) {
     return {
       status: 'failed' as const,
-      errorMessage: extractTokenHubErrorMessage(data, 'TokenHub 生成任务失败'),
-      statusCode: status,
-      statusMessage: 'TokenHub 任务失败',
-      requestId,
+      errorMessage: '同步通道任务不需要轮询，结果已在 /api/generate 响应中返回',
     }
   }
 
   return {
-    status: 'processing' as const,
-    revisedPrompt,
-    statusCode: status || 'processing',
-    statusMessage: 'TokenHub 任务处理中',
-    requestId,
+    status: 'failed' as const,
+    errorMessage: '历史异步通道任务已废弃，请重新提交（当前使用 Hy-Image-3.0 同步通道）',
   }
 }
 
@@ -285,28 +263,6 @@ async function readUploadImageBuffer(originalUrl: string, maxBytes = MAX_REFEREN
   return imageBuffer
 }
 
-function summarizeTokenHubSubmitParams(params: {
-  model: string
-  prompt: string
-  images: string[]
-  Resolution: string
-  extra_body: {
-    seed: number
-    revise: boolean
-  }
-  negative_prompt?: string
-}) {
-  return {
-    model: params.model,
-    promptLength: params.prompt.length,
-    imagePreview: params.images[0]?.slice(0, 80),
-    Resolution: params.Resolution,
-    seed: params.extra_body.seed,
-    revise: params.extra_body.revise,
-    negativePromptLength: params.negative_prompt?.length,
-  }
-}
-
 function buildReferenceImagePrompt(prompt: string) {
   return [
     '以参考图真实改夜景，保持主体、构图、视角、透视、位置不变，只改昼夜和灯光。',
@@ -376,21 +332,25 @@ function normalizeTokenHubMimeType(contentType: string) {
   return 'image/jpeg'
 }
 
-const TOKENHUB_RESOLUTION_CANDIDATES = [
-  '2048:512',
-  '1280:720',
-  '1024:768',
-  '1024:1024',
-  '768:1024',
-  '720:1280',
-  '512:2048',
+/**
+ * 同步接口 size 格式：${宽}x${高}（如 `1024x1024`），宽高 [512, 2048]，面积 ≤ 1024×1024。
+ * 详见 https://cloud.tencent.com/document/product/1823/135745
+ */
+const TOKENHUB_SIZE_CANDIDATES = [
+  '2048x512',
+  '1280x720',
+  '1024x768',
+  '1024x1024',
+  '768x1024',
+  '720x1280',
+  '512x2048',
 ] as const
 
-function buildTokenHubResolution(width?: number, height?: number) {
-  return pickClosestResolution(width, height, TOKENHUB_RESOLUTION_CANDIDATES, '1024:1024')
+function buildTokenHubSize(width?: number, height?: number) {
+  return pickClosestSize(width, height, TOKENHUB_SIZE_CANDIDATES, '1024x1024')
 }
 
-function pickClosestResolution(
+function pickClosestSize(
   width: number | undefined,
   height: number | undefined,
   candidates: readonly string[],
@@ -401,11 +361,11 @@ function pickClosestResolution(
   }
 
   const ratio = width / height
-  let bestResolution = fallback
+  let bestSize = fallback
   let bestDistance = Number.POSITIVE_INFINITY
 
   for (const candidate of candidates) {
-    const [candidateWidth, candidateHeight] = candidate.split(':').map(Number)
+    const [candidateWidth, candidateHeight] = candidate.split('x').map(Number)
 
     if (!candidateWidth || !candidateHeight) {
       continue
@@ -416,15 +376,35 @@ function pickClosestResolution(
 
     if (distance < bestDistance) {
       bestDistance = distance
-      bestResolution = candidate
+      bestSize = candidate
     }
   }
 
-  return bestResolution
+  return bestSize
 }
 
 function createSeed() {
   return Math.floor(Math.random() * 1_000_000_000)
+}
+
+function summarizeSyncParams(params: {
+  model: string
+  prompt: string
+  images: string[]
+  size: string
+  seed: number
+  revise: number
+  negative_prompt?: string
+}) {
+  return {
+    model: params.model,
+    promptLength: params.prompt.length,
+    imagePreview: params.images[0]?.slice(0, 80),
+    size: params.size,
+    seed: params.seed,
+    revise: params.revise,
+    negativePromptLength: params.negative_prompt?.length,
+  }
 }
 
 function extractTokenHubErrorMessage(data: any, fallback: string) {
@@ -439,34 +419,20 @@ function extractTokenHubErrorMessage(data: any, fallback: string) {
     || fallback
 }
 
-function readTokenHubTaskId(data: any) {
-  return data?.id || data?.data?.id || data?.task_id || data?.data?.task_id
-}
-
-function readTokenHubRequestId(data: any) {
-  return data?.request_id || data?.data?.request_id || data?.requestId
-}
-
-function readTokenHubTaskStatus(data: any) {
-  return String(
-    data?.status
-    || data?.data?.status
-    || data?.task_status
-    || data?.data?.task_status
-    || '',
-  ).toLowerCase()
-}
-
-function readTokenHubImageUrl(data: any) {
-  const image = data?.data?.[0] || data?.data?.images?.[0] || data?.images?.[0] || data?.output?.[0]
+function readSyncImageUrl(data: any) {
+  const image = data?.data?.[0] || data?.images?.[0]
 
   if (typeof image === 'string') {
     return image
   }
 
-  return image?.url || image?.image_url || data?.image_url || data?.result_image
+  return image?.url || image?.image_url || data?.image_url
 }
 
-function readTokenHubRevisedPrompt(data: any) {
-  return data?.data?.revised_prompt || data?.revised_prompt || data?.output?.revised_prompt
+function readSyncRevisedPrompt(data: any) {
+  return data?.data?.[0]?.revised_prompt || data?.revised_prompt
+}
+
+function readSyncRequestId(data: any) {
+  return data?.request_id || data?.requestId
 }

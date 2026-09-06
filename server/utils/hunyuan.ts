@@ -1,3 +1,4 @@
+import { createError } from 'h3'
 import {
   type HunyuanCredentials,
   type QueryNightImageJobResult,
@@ -28,7 +29,15 @@ export async function submitNightImageJob({
 }: SubmitNightImageJobParams): Promise<SubmitNightImageJobResult> {
   if (originalUrl) {
     if (!tokenHubApiKey) {
-      throw new Error('参考图生成已固定走 TokenHub，请在 .env 中配置 TOKENHUB_API_KEY_IMAGE')
+      throw createError({
+        statusCode: 500,
+        statusMessage: '参考图生成已固定走 TokenHub，请在 Vercel 环境变量中配置 TOKENHUB_API_KEY_IMAGE',
+        data: {
+          source: 'tokenhub',
+          message: '参考图生成已固定走 TokenHub，请在 Vercel 环境变量中配置 TOKENHUB_API_KEY_IMAGE',
+          errorMessage: '参考图生成已固定走 TokenHub，请在 Vercel 环境变量中配置 TOKENHUB_API_KEY_IMAGE',
+        },
+      })
     }
 
     return submitTokenHubReferenceImageJob({

@@ -81,8 +81,14 @@ export async function submitTokenHubReferenceImageJob({
 
   const data = await parseJsonResponse(response)
 
-  if (!response.ok) {
-    throw createUpstreamError(response.status, extractTokenHubErrorMessage(data, 'TokenHub 提交任务失败'))
+  // TokenHub 部分错误会用 HTTP 200 + {"error": {...}} 返回（而非 4xx），
+  // 必须在「响应正常」时也检测 error 字段，否则会被后面的兜底逻辑当成 [unhandled] 抛出。
+  if (!response.ok || data?.error) {
+    throw createUpstreamError(
+      response.status || 502,
+      extractTokenHubErrorMessage(data, 'TokenHub 提交任务失败'),
+      data,
+    )
   }
 
   const taskId = readTokenHubTaskId(data)
@@ -113,19 +119,34 @@ export async function submitTokenHubReferenceImageJob({
     }
   }
 
+  // HTTP 200 但既无任务 ID 也无图片地址：说明上游返回结构发生了变化（常见于模型从异步切同步、或字段改名）。
+  // 记录完整原始响应，便于对照真实字段名修正解析逻辑。
+  console.error('[tokenhub] submit 返回了无法识别的结构（HTTP 200 但既无任务 ID 也无图片地址）:', {
+    status,
+    requestId,
+    raw: JSON.stringify(data).slice(0, 1500),
+  })
+
   const submitErrorMessage = extractTokenHubErrorMessage(data, 'TokenHub 提交任务失败')
   const details = [
     `TokenHub 未返回任务 ID，状态：${status || 'unknown'}`,
     submitErrorMessage,
     requestId ? `请求 ID：${requestId}` : '',
+    '服务端已记录完整原始响应，请把 Vercel 日志里 [tokenhub] 的 raw 字段发我，我据此对齐字段名',
   ].filter(Boolean)
 
-  throw new Error(details.join('；'))
+  throw createUpstreamError(502, details.join('；'), data)
 }
 
 export async function queryTokenHubImageJob(taskId: string, tokenHubApiKey?: string): Promise<QueryNightImageJobResult> {
   if (!tokenHubApiKey) {
-    throw new Error('缺少 TokenHub API Key，请在 .env 中配置 TOKENHUB_API_KEY_IMAGE')
+    throw createError({
+      statusCode: 500,
+      statusMessage: '缺少 TokenHub API Key，请在 Vercel 环境变量中配置 TOKENHUB_API_KEY_IMAGE',
+      data: {
+        message: '缺少 TokenHub API Key，请在 Vercel 环境变量中配置 TOKENHUB_API_KEY_IMAGE',
+      },
+    })
   }
 
   const response = await fetch(TOKENHUB_QUERY_URL, {
@@ -142,8 +163,12 @@ export async function queryTokenHubImageJob(taskId: string, tokenHubApiKey?: str
 
   const data = await parseJsonResponse(response)
 
-  if (!response.ok) {
-    throw createUpstreamError(response.status, extractTokenHubErrorMessage(data, 'TokenHub 查询任务失败'))
+  if (!response.ok || data?.error) {
+    throw createUpstreamError(
+      response.status || 502,
+      extractTokenHubErrorMessage(data, 'TokenHub 查询任务失败'),
+      data,
+    )
   }
 
   const status = readTokenHubTaskStatus(data)
@@ -153,7 +178,8 @@ export async function queryTokenHubImageJob(taskId: string, tokenHubApiKey?: str
 
   if (status === 'completed' || status === 'succeeded' || status === 'succeed') {
     if (!imageUrl) {
-      throw new Error('TokenHub 任务已完成，但未返回图片地址')
+      console.error('[tokenhub] 任务已完成但未返回图片地址:', JSON.stringify(data).slice(0, 1500))
+      throw createUpstreamError(502, 'TokenHub 任务已完成，但未返回图片地址', data)
     }
 
     return {
@@ -402,7 +428,11 @@ function createSeed() {
 }
 
 function extractTokenHubErrorMessage(data: any, fallback: string) {
-  return data?.error?.message
+  const errorObj = data?.error
+
+  return errorObj?.message_zh
+    || errorObj?.message
+    || data?.message_zh
     || data?.message
     || data?.msg
     || data?.detail

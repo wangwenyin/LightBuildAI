@@ -65,18 +65,26 @@ export type QueryNightImageJobResult =
     requestId?: string
   }
 
-export function createUpstreamError(statusCode: number, statusMessage: string) {
+export function createUpstreamError(statusCode: number, statusMessage: string, rawData?: unknown) {
+  const cause = rawData && typeof rawData === 'object'
+    ? (rawData as { error?: { code?: string, request_id?: string, requestId?: string } }).error
+    : undefined
+  const errorCode = cause?.code
+  const requestId = cause?.request_id || cause?.requestId
+
   return createError({
     statusCode,
     statusMessage,
     data: {
       message: statusMessage,
       errorMessage: statusMessage,
+      ...(errorCode ? { errorCode } : {}),
+      ...(requestId ? { requestId } : {}),
     },
   })
 }
 
-export async function parseJsonResponse(response: Response) {
+export async function parseJsonResponse(response: Response, fallbackContext = '上游接口') {
   const text = await response.text()
 
   if (!text) {
@@ -86,7 +94,19 @@ export async function parseJsonResponse(response: Response) {
   try {
     return JSON.parse(text)
   } catch {
-    throw new Error(`上游接口返回了无法解析的响应：${text.slice(0, 200)}`)
+    const createUpstreamParseError = (globalThis as { createError?: typeof createError }).createError
+
+    if (createUpstreamParseError) {
+      throw createUpstreamParseError({
+        statusCode: 502,
+        statusMessage: `${fallbackContext}返回了无法解析的响应：${text.slice(0, 200)}`,
+        data: {
+          message: `${fallbackContext}返回了无法解析的响应`,
+        },
+      })
+    }
+
+    throw new Error(`${fallbackContext}返回了无法解析的响应：${text.slice(0, 200)}`)
   }
 }
 

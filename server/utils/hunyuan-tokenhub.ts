@@ -82,16 +82,22 @@ export async function submitTokenHubReferenceImageJob({
   })
   const size = buildTokenHubSize(imageWidth, imageHeight)
   const seed = createSeed()
-  // 同步接口官方字段：model / prompt / images / size / seed / revise / negative_prompt
-  // 注意 size 格式是 `${宽}x${高}`（如 `1024x1024`），不是 `${宽}:${高}`。
+  // TokenHub /v1/wand/hunyuan-image/v3-generation 同步接口的官方字段：
+  //   model / prompt / images / size / seed / revise / footnote
+  // 字段类型严格按官方文档（详见 https://cloud.tencent.com/document/product/1823/135745）：
+  //   - size: `${宽}x${高}`，例如 `1024x1024`
+  //   - revise: boolean（不是 0/1 数字）
+  //   - seed: [1, 4294967295]
+  // 注意：wand 同步接口的输入参数列表里**没有** negative_prompt 字段，
+  //       传了会被服务端当作"未知字段"，历史上曾因此直接 500，因此这里只拼合到 prompt 头尾部。
+  const fullPrompt = buildReferenceImagePrompt(prompt, negativePrompt)
   const payload = {
     model: TOKENHUB_MODEL,
-    prompt: buildReferenceImagePrompt(prompt),
+    prompt: fullPrompt,
     images: [image],
     size,
     seed,
-    revise: revise === false ? 0 : 1,
-    ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+    revise: revise === false ? false : true,
   }
 
   console.log('[tokenhub] sync generate params:', summarizeSyncParams(payload))
@@ -110,7 +116,9 @@ export async function submitTokenHubReferenceImageJob({
       signal: controller.signal,
     })
 
-    const data = await parseJsonResponse(response)
+    const data = await parseJsonResponse(response, 'TokenHub 同步生图接口')
+    // 无论成功失败，都把上游原始响应打到服务端日志，便于排查字段名差异。
+    console.log('[tokenhub] sync generate raw response:', JSON.stringify(data).slice(0, 2000))
 
     // TokenHub 部分错误会用 HTTP 200 + {"error": {...}} 返回（而非 4xx），
     // 必须在「响应正常」时也检测 error 字段，否则会被后面的兜底逻辑当成 [unhandled] 抛出。
@@ -127,8 +135,7 @@ export async function submitTokenHubReferenceImageJob({
     const requestId = readSyncRequestId(data)
 
     if (!imageUrl) {
-      console.error('[tokenhub] sync generate 响应中未包含图片:', JSON.stringify(data).slice(0, 1500))
-      throw createUpstreamError(502, 'TokenHub 同步生图成功，但响应中未包含图片 URL', data)
+      throw createUpstreamError(502, `TokenHub 同步生图成功，但响应中未识别到图片字段。${summarizeRawData(data)}`, data)
     }
 
     return {
@@ -263,11 +270,17 @@ async function readUploadImageBuffer(originalUrl: string, maxBytes = MAX_REFEREN
   return imageBuffer
 }
 
-function buildReferenceImagePrompt(prompt: string) {
-  return [
+function buildReferenceImagePrompt(prompt: string, negativePrompt?: string) {
+  const parts = [
     '以参考图真实改夜景，保持主体、构图、视角、透视、位置不变，只改昼夜和灯光。',
     prompt,
-  ].join(' ')
+  ]
+
+  if (negativePrompt) {
+    parts.push(`Negative: ${negativePrompt}`)
+  }
+
+  return parts.join(' ')
 }
 
 function resolveTokenHubImageUrl(originalUrl: string, publicOrigin?: string) {
@@ -393,8 +406,7 @@ function summarizeSyncParams(params: {
   images: string[]
   size: string
   seed: number
-  revise: number
-  negative_prompt?: string
+  revise: boolean
 }) {
   return {
     model: params.model,
@@ -403,30 +415,142 @@ function summarizeSyncParams(params: {
     size: params.size,
     seed: params.seed,
     revise: params.revise,
-    negativePromptLength: params.negative_prompt?.length,
+    negativePromptIncluded: params.prompt.includes('Negative:'),
   }
 }
 
 function extractTokenHubErrorMessage(data: any, fallback: string) {
   const errorObj = data?.error
 
-  return errorObj?.message_zh
+  const message = errorObj?.message_zh
     || errorObj?.message
     || data?.message_zh
     || data?.message
     || data?.msg
     || data?.detail
-    || fallback
+
+  if (message) {
+    return message
+  }
+
+  // fallback 时把上游响应的字段摘要带回去，方便定位字段命名差异
+  return `${fallback}。${summarizeRawData(data)}`
 }
 
 function readSyncImageUrl(data: any) {
-  const image = data?.data?.[0] || data?.images?.[0]
+  // OpenAI 兼容：data.data[0].url | data.data[0].b64_json
+  const openAiImage = data?.data?.[0]
 
-  if (typeof image === 'string') {
-    return image
+  if (typeof openAiImage === 'string') {
+    return openAiImage
   }
 
-  return image?.url || image?.image_url || data?.image_url
+  if (openAiImage) {
+    if (typeof openAiImage.url === 'string') {
+      return openAiImage.url
+    }
+
+    if (typeof openAiImage.image_url === 'string') {
+      return openAiImage.image_url
+    }
+
+    if (typeof openAiImage.b64_json === 'string') {
+      return `data:image/png;base64,${openAiImage.b64_json}`
+    }
+  }
+
+  // 部分接口使用 images: [{ url | b64_json | image_url }]
+  const wandImage = data?.images?.[0]
+
+  if (typeof wandImage === 'string') {
+    return wandImage
+  }
+
+  if (wandImage) {
+    if (typeof wandImage.url === 'string') {
+      return wandImage.url
+    }
+
+    if (typeof wandImage.image_url === 'string') {
+      return wandImage.image_url
+    }
+
+    if (typeof wandImage.b64_json === 'string') {
+      return `data:image/png;base64,${wandImage.b64_json}`
+    }
+  }
+
+  // 腾讯 wand/混元风格：data.output.url / image_url / image
+  const output = data?.output
+
+  if (output) {
+    if (typeof output.url === 'string') {
+      return output.url
+    }
+
+    if (typeof output.image_url === 'string') {
+      return output.image_url
+    }
+
+    if (typeof output.image === 'string') {
+      return output.image
+    }
+  }
+
+  // OpenAI Chat 多模态：data.choices[0].message.content[] 含 type=image_url 项
+  const choicesContent = data?.choices?.[0]?.message?.content
+
+  if (Array.isArray(choicesContent)) {
+    for (const part of choicesContent) {
+      const url = part?.image_url?.url || part?.image_url || part?.url
+      if (typeof url === 'string') {
+        return url
+      }
+    }
+  }
+
+  // 顶层字段兜底
+  for (const key of ['image_url', 'imageUrl', 'url', 'image', 'result_image', 'result']) {
+    const value = data?.[key]
+
+    if (typeof value === 'string') {
+      return value
+    }
+  }
+
+  // results: [{ url | ... }]
+  const firstResult = data?.results?.[0]
+
+  if (typeof firstResult === 'string') {
+    return firstResult
+  }
+
+  if (firstResult) {
+    if (typeof firstResult.url === 'string') {
+      return firstResult.url
+    }
+
+    if (typeof firstResult.image_url === 'string') {
+      return firstResult.image_url
+    }
+  }
+
+  return undefined
+}
+
+/**
+ * 当 statusMessage 走到 fallback（即上游响应里没有 error.message 等已知字段）时，
+ * 把原始响应的浅层 keys + 摘要拼成可读字符串塞进 statusMessage，
+ * 便于前端和 Vercel 日志直接看到上游返回结构，定位字段命名差异。
+ */
+function summarizeRawData(data: any) {
+  try {
+    const json = JSON.stringify(data)
+    const keys = data && typeof data === 'object' ? Object.keys(data).join(',') : '(non-object)'
+    return `上游响应 keys=[${keys}] preview=${json.slice(0, 300)}`
+  } catch {
+    return '上游响应无法序列化'
+  }
 }
 
 function readSyncRevisedPrompt(data: any) {

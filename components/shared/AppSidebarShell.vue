@@ -230,6 +230,11 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
           <span v-else>{{ props.actionLabel }}</span>
         </button>
 
+        <!-- 导航/模式切换区：紧贴品牌与主操作下方，收起态自动隐藏 -->
+        <nav v-if="props.expanded && slots.nav" class="sidebar-nav" aria-label="工作台模式">
+          <slot name="nav" />
+        </nav>
+
         <div v-if="props.expanded" class="sidebar-content">
           <slot />
         </div>
@@ -240,7 +245,6 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
       </aside>
     </div>
   </Teleport>
-
   <div
     v-else
     class="app-sidebar-shell-layer"
@@ -303,6 +307,11 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
         </template>
         <span v-else>{{ props.actionLabel }}</span>
       </button>
+
+      <!-- 导航/模式切换区：紧贴品牌与主操作下方，收起态自动隐藏 -->
+      <nav v-if="props.expanded && slots.nav" class="sidebar-nav" aria-label="工作台模式">
+        <slot name="nav" />
+      </nav>
 
       <div v-if="props.expanded" class="sidebar-content">
         <slot />
@@ -506,13 +515,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 }
 
 .app-sidebar-shell--collapsed .sidebar-top {
-  width: 100%;
+  flex-direction: column;
   justify-content: center;
-  gap: 0;
+  gap: 8px;
 }
 
 .app-sidebar-shell--collapsed .sidebar-brand {
-  display: none;
+  /* 折叠态只渲染 LB 标记（品牌文字由 v-if 隐藏），作为展开按钮的定位参照 */
+  position: relative;
   transition:
     opacity 0.2s ease,
     transform 0.24s ease;
@@ -529,10 +539,36 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 }
 
 .app-sidebar-shell--collapsed .sidebar-toggle {
-  position: static;
+  /* 折叠态：展开按钮精确覆盖在品牌 logo（42×42 brand-mark）正上方 */
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;       /* 与 brand-mark 圆角一致 */
+  transform: translateX(-50%) scale(0.88);
+  opacity: 0;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.94);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+/*
+ * 折叠态：展开按钮默认隐藏，仅当鼠标移入顶部品牌区（.sidebar-top，含 logo 与浮出按钮）或键盘聚焦时浮出。
+ *
+ * 关键：hover 目标必须是 .sidebar-top（按钮的祖先容器），而**不能**是 .sidebar-brand。
+ * 因为按钮浮出后是 position:absolute 盖在 logo 上方、但 DOM 父节点是 .sidebar-top-actions
+ * （.sidebar-brand 的兄弟而非后代）。若用 .sidebar-brand:hover，按钮一浮现就把光标从
+ * brand 移开 → :hover 失效 → 按钮消失 → 光标回到 brand → 又浮现 …… 形成抖动死循环。
+ * 用 .sidebar-top:hover 则悬停按钮本身仍满足（按钮是 .sidebar-top 的后代），循环被打破。
+ */
+.app-sidebar-shell--collapsed .sidebar-top:hover .sidebar-toggle,
+.app-sidebar-shell--collapsed .sidebar-toggle:focus-visible {
   opacity: 1;
+  transform: translateX(-50%) scale(1);
   pointer-events: auto;
-  transform: none;
 }
 
 .app-sidebar-shell--collapsed .sidebar-top-actions {
@@ -545,6 +581,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   min-height: 0;
   flex: 1;
   flex-direction: column;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.06);
 }
 
 .sidebar-footer {

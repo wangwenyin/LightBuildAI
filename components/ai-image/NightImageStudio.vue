@@ -72,10 +72,8 @@ const isMobileViewport = shallowRef(false)
 const activeHistoryId = shallowRef('')
 const draftHistoryId = shallowRef('')
 const shouldAnimateResultReveal = shallowRef(false)
-const promptShellElement = shallowRef<HTMLElement | null>(null)
 /** 提示词输入框，用于校验失败时把用户直接带到需要补内容的地方 */
 const promptTextareaElement = shallowRef<HTMLTextAreaElement | null>(null)
-const mobilePromptOffset = shallowRef('0px')
 const isRestoringHistory = shallowRef(false)
 /** 点击生成但条件不满足时的就地提示（非任务错误） */
 const validationHint = shallowRef('')
@@ -93,7 +91,6 @@ const previewTransformStyle = computed<CSSProperties>(() => ({
 const previewScaleLabel = computed(() => `${Math.round(previewScale.value * 100)}%`)
 let resultRevealTimer: number | null = null
 let mobileViewportQuery: MediaQueryList | null = null
-let promptResizeObserver: ResizeObserver | null = null
 let previewDragPointerId: number | null = null
 let previewDragStartX = 0
 let previewDragStartY = 0
@@ -110,10 +107,6 @@ const isMobileSidebarOpen = computed({
   get: () => props.mobileSidebarOpen,
   set: value => emit('update:mobileSidebarOpen', value),
 })
-const imageMainStyle = computed<CSSProperties & Record<'--mobile-prompt-offset', string>>(() => ({
-  '--mobile-prompt-offset': mobilePromptOffset.value,
-}))
-
 const stageTitle = computed(() => {
   if (hasResultImage.value && activeView.value === 'result') {
     return '夜景成片'
@@ -363,7 +356,6 @@ onActivated(() => {
 
 onMounted(() => {
   setupMobileViewportWatcher()
-  setupPromptShellObserver()
   loadRecords()
   bindBeforeUnload()
   window.addEventListener('keydown', handleWindowKeydown)
@@ -436,7 +428,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   window.removeEventListener('keydown', handleWindowKeydown)
   unbindViewportListener(mobileViewportQuery, handleMobileViewportChange)
-  promptResizeObserver?.disconnect()
 
   if (!resultRevealTimer) {
     return
@@ -957,8 +948,6 @@ function handleMobileViewportChange(event: MediaQueryListEvent) {
   if (!event.matches) {
     isMobileSidebarOpen.value = false
   }
-
-  syncMobilePromptOffset()
 }
 
 function handleFileSelect(event: Event) {
@@ -1135,32 +1124,6 @@ function handleBeforeUnload() {
   clearPendingReload()
 }
 
-function setupPromptShellObserver() {
-  if (!window.ResizeObserver) {
-    syncMobilePromptOffset()
-    return
-  }
-
-  promptResizeObserver = new window.ResizeObserver(() => {
-    syncMobilePromptOffset()
-  })
-
-  if (promptShellElement.value) {
-    promptResizeObserver.observe(promptShellElement.value)
-  }
-
-  syncMobilePromptOffset()
-}
-
-function syncMobilePromptOffset() {
-  if (!isMobileViewport.value || !promptShellElement.value) {
-    mobilePromptOffset.value = '0px'
-    return
-  }
-
-  mobilePromptOffset.value = `${Math.ceil(promptShellElement.value.getBoundingClientRect().height)}px`
-}
-
 function bindViewportListener(query: MediaQueryList | null, listener: (event: MediaQueryListEvent) => void) {
   if (!query) {
     return
@@ -1206,19 +1169,23 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
       class="image-sidebar"
       :expanded="isSidebarExpanded"
       :mobile-open="isMobileSidebarOpen"
-      subtitle="Night Studio"
+      brand-title="LightBuild"
+      subtitle="夜景生成"
       action-label="新建任务"
       collapsed-action-label="+"
       @toggle="toggleSidebar"
       @action="handleNewTask"
       @close-mobile="closeMobileSidebar"
     >
+      <template #nav>
+        <slot name="mode-switch" />
+      </template>
+
       <RecentRecordsPanel
         title="最近"
         :items="recentRecords"
         :active-id="selectedHistoryId"
         empty-text="暂无生成记录"
-        show-clear
         show-delete
         @select="openHistory"
         @delete="handleDeleteRecord"
@@ -1226,10 +1193,28 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
       />
     </AppSidebarShell>
 
-    <main class="image-main" :style="imageMainStyle">
+    <main class="image-main">
       <div class="image-scroll-region">
         <div class="studio-stage-card">
           <div class="stage-header">
+            <!-- 移动端：侧边栏是抽屉，需要一个入口按钮（桌面端隐藏） -->
+            <button
+              class="sidebar-trigger ui-button-reset ui-interactive-lift"
+              type="button"
+              aria-label="打开侧边栏"
+              @click="isMobileSidebarOpen = true"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M4.75 6.75h14.5M4.75 12h14.5M4.75 17.25h14.5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-width="1.8"
+                />
+              </svg>
+            </button>
+
             <div class="stage-title-group">
               <p class="section-label">
                 Visual Stage
@@ -1336,7 +1321,12 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
             </p>
           </div>
         </div>
-        <div ref="promptShellElement" class="prompt-shell">
+
+      <!--
+        底部输入区：与「AI 聊天」的 composer 一致的交互——
+        内容区（舞台卡片）独立滚动，提示词输入区固定在底部不随内容滚动。
+      -->
+      <div class="prompt-shell">
           <section class="prompt-card">
             <div v-if="handoffNotice" class="handoff-banner" role="status" aria-live="polite">
               <span class="handoff-banner__badge">来自 AI 聊天</span>
@@ -1508,6 +1498,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   position: relative;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -1552,7 +1543,15 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 16px 16px 12px;
+}
+
+/* 舞台卡在宽屏下限宽居中，避免拉伸过宽导致观感松散 */
+.studio-stage-card {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
 }
 
 .studio-stage-card,
@@ -1571,10 +1570,23 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   backdrop-filter: blur(18px);
 }
 
+/*
+ * 底部输入区：固定在内容区下方、不参与滚动（桌面端即生效）。
+ * 与 AI 聊天的 .composer-shell 保持一致的交互语义。
+ */
 .prompt-shell {
   flex-shrink: 0;
-  padding-top: 16px;
-  background: linear-gradient(180deg, rgba(250, 250, 249, 0), rgba(250, 250, 249, 0.96) 32%);
+  padding: 12px 16px 16px;
+  border-top: 1px solid rgba(17, 24, 39, 0.06);
+  background: rgba(250, 250, 249, 0.96);
+  box-shadow: 0 -12px 32px rgba(15, 23, 42, 0.04);
+  backdrop-filter: blur(14px);
+}
+
+.prompt-shell .prompt-card {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
 }
 
 .handoff-banner {
@@ -1657,6 +1669,31 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   gap: 16px;
 }
 
+.stage-title-group {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 移动端侧边栏入口：桌面端由 @media 隐藏 */
+.sidebar-trigger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #111827;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+}
+
+.sidebar-trigger svg {
+  width: 18px;
+  height: 18px;
+}
+
 .stage-tools,
 .prompt-actions {
   gap: 12px;
@@ -1679,14 +1716,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   background:
     linear-gradient(180deg, rgba(250, 250, 249, 0.88), rgba(229, 231, 235, 0.82)),
     #f5f5f4;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
 }
 
 .image-wrapper {
   position: relative;
   width: 100%;
-  height: 420px;
+  min-height: 420px;
 }
 
 .stage-image-button {
@@ -1725,7 +1762,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 .stage-image {
   display: block;
   width: 100%;
-  height: 100%;
+  height: auto;
   max-height: 820px;
   object-fit: contain;
 }
@@ -2456,27 +2493,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
     grid-template-columns: 1fr;
   }
 
-  .image-scroll-region {
-    padding-bottom: calc(var(--mobile-prompt-offset, 0px) + 16px);
+  .sidebar-trigger {
+    display: inline-flex;
   }
 
-  .prompt-shell {
-    position: fixed;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 20;
-    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
-    box-sizing: border-box;
-    background:
-      linear-gradient(180deg, rgba(250, 250, 249, 0), rgba(250, 250, 249, 0.96) 26%, rgba(250, 250, 249, 1) 100%);
-    pointer-events: none;
-  }
-
-  .prompt-card {
-    pointer-events: auto;
-  }
-
+  /*
+   * 底部输入区在各宽度下都由 flex 布局自然固定在底部，
+   * 不再需要 position: fixed + JS 量高度补偿滚动留白。
+   */
   .image-sidebar {
     border-right: none;
     border-bottom: none;
@@ -2504,12 +2528,11 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 
 @media (max-width: 640px) {
   .image-scroll-region {
-    padding: 16px 12px calc(var(--mobile-prompt-offset, 0px) + 16px);
+    padding: 16px 12px;
   }
 
   .prompt-shell {
-    padding-right: 12px;
-    padding-left: 12px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
   }
 
   .studio-stage-card,

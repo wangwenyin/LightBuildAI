@@ -1263,19 +1263,23 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
       class="chat-sidebar"
       :expanded="isSidebarExpanded"
       :mobile-open="isMobileSidebarOpen"
-      subtitle="Chat Studio"
+      brand-title="LightBuild"
+      subtitle="AI 聊天"
       action-label="新建聊天"
       collapsed-action-label="+"
       @toggle="toggleSidebar"
       @action="clearConversation"
       @close-mobile="closeMobileSidebar"
     >
+      <template #nav>
+        <slot name="mode-switch" />
+      </template>
+
       <RecentRecordsPanel
         title="最近"
         :items="recentSessions"
         :active-id="activeSessionId"
         empty-text="暂无聊天记录"
-        show-clear
         show-delete
         @select="openSession"
         @delete="handleDeleteSession"
@@ -1293,6 +1297,24 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
     </AppSidebarShell>
 
     <main class="chat-main">
+      <!-- 移动端：侧边栏是抽屉，需要一个常驻入口（桌面端隐藏） -->
+      <button
+        class="sidebar-trigger ui-button-reset ui-interactive-lift"
+        type="button"
+        aria-label="打开侧边栏"
+        @click="isMobileSidebarOpen = true"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M4.75 6.75h14.5M4.75 12h14.5M4.75 17.25h14.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-width="1.8"
+          />
+        </svg>
+      </button>
+
       <div ref="messageListRef" class="chat-stream" :class="chatStreamClasses">
         <div v-if="!hasConversation" class="chat-welcome">
           <p class="welcome-kicker">
@@ -1652,6 +1674,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   position: relative;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -1712,6 +1735,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   text-transform: uppercase;
 }
 .chat-main {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -1720,6 +1744,26 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   background:
     radial-gradient(circle at top, rgba(255, 255, 255, 0.88), transparent 40%),
     rgba(250, 250, 249, 0.9);
+}
+
+/* 移动端侧边栏入口：桌面端隐藏 */
+.sidebar-trigger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #111827;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+}
+
+.sidebar-trigger svg {
+  width: 18px;
+  height: 18px;
 }
 
 .chat-stream {
@@ -2442,6 +2486,10 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
     border-bottom: none;
   }
 
+  /* 移动/窄屏下侧边栏变成抽屉，需要一个常驻入口按钮 */
+  .sidebar-trigger {
+    display: inline-flex;
+  }
 }
 
 @media (max-width: 640px) {

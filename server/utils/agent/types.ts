@@ -76,6 +76,11 @@ export type AgentOptions = {
   enableGenerate: boolean
   /** 本地无 Key 演示模式：用脚本化的 Mock 模型跑通循环 */
   mockLlm: boolean
+  /**
+   * Mock 剧本变体：`withGenerate` 会在提示词达标后多走一次出图工具，
+   * 用于在无 Key 时验收「聊天直接出图 + 结果卡片 + 跨 tab 交接」这条链路。
+   */
+  mockMode?: 'default' | 'withGenerate'
   generate: AgentGenerateContext
   /** 允许上层注入自定义模型调用器（测试用） */
   callModel?: ModelCaller

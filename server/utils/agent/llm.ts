@@ -223,10 +223,12 @@ export const streamTokenHubWithTools: StreamingModelCaller = async ({
  * 「查规范 → 组装提示词 → 自检 → 收尾」的完整 ReAct 循环。
  * 依据「已执行了几轮工具」推进剧本，仅用于本地演示与冒烟测试。
  */
-export function createScriptedCaller({ stream = false } = {}): StreamingModelCaller {
+export function createScriptedCaller({ stream = false, withGenerate = false } = {}): StreamingModelCaller {
+  const script = withGenerate ? MOCK_SCRIPT_WITH_GENERATE : MOCK_SCRIPT
+
   return async ({ messages, model, onDelta }) => {
     const toolRounds = messages.filter(message => message.role === 'tool').length
-    const step = MOCK_SCRIPT[Math.min(toolRounds, MOCK_SCRIPT.length - 1)]!
+    const step = script[Math.min(toolRounds, script.length - 1)]!
 
     if (step.toolCall) {
       const call = typeof step.toolCall === 'function' ? step.toolCall(toolRounds) : step.toolCall
@@ -334,6 +336,43 @@ const MOCK_SCRIPT: Array<{ toolCall?: { name: string, arguments: string } | ((to
       '负向提示词：白天场景；室内灯光亮度高于室外灯光；模糊文字；乱码文字；噪点；畸变；过曝。',
       '',
       '> 配置 TOKENHUB_API_KEY_CHAT 后即切换为真实模型，可多轮对话并自主决定调用哪些工具。',
+    ].join('\n'),
+  },
+]
+
+/**
+ * 带出图的 Mock 剧本：与上面相同，但在提示词达标后追加一次 generate_night_image 调用。
+ * 用于在无 Key 的情况下验收「AI 聊天直接出图 + 结果卡片 + 跨 tab 交接」这条链路。
+ */
+const MOCK_SCRIPT_WITH_GENERATE: typeof MOCK_SCRIPT = [
+  ...MOCK_SCRIPT.slice(0, 4),
+  {
+    toolCall: {
+      name: 'generate_night_image',
+      arguments: JSON.stringify({
+        prompt: '将建筑照片渲染为现代商业综合体夜景。深蓝色夜空背景带几颗星星，高清无噪点；树木底部被暖黄色光打亮，近处灌木矮树被暖白色灯光照亮；树枝悬挂带「福」字的黄颜色八面圆柱形灯笼 5-10 个，并安装随机颜色的发光藤球灯 5-10 个；沿街商铺橱窗贴图清晰、透出柔和灯光；地面用投影灯投射鲜艳花朵图案；广告牌全部点亮、内透清晰，以品牌广告为主；整体为现代商业综合体夜景风格，色彩层次丰富、灯光对比强烈，充满节日与繁华气息；禁止室内灯光亮度高于室外灯光。',
+        negativePrompt: '白天场景；室内灯光明显高于室外灯光；模糊不清的广告牌文字；乱码文字；低清晰度；噪点；涂抹感；重影；畸变；过曝',
+        revise: false,
+      }),
+    },
+  },
+  {
+    text: [
+      '（演示模式 Mock）提示词已自检达标，并已提交夜景渲染。',
+      '',
+      '**渲染任务**：已通过 generate_night_image 工具提交到出图服务，任务信息见下方结果卡片。',
+      '',
+      '最终可直接使用的夜景提示词：',
+      '',
+      '```',
+      '将建筑照片渲染为现代商业综合体夜景。深蓝色夜空背景带几颗星星，高清无噪点；',
+      '树木底部被暖黄色光打亮，近处灌木矮树被暖白色灯光照亮；',
+      '树枝悬挂带「福」字的黄颜色八面圆柱形灯笼 5-10 个，并安装随机颜色的发光藤球灯 5-10 个；',
+      '沿街商铺橱窗贴图清晰、透出柔和灯光；地面用投影灯投射鲜艳花朵图案；',
+      '广告牌全部点亮、内透清晰，以品牌广告为主；',
+      '整体为现代商业综合体夜景风格，色彩层次丰富、灯光对比强烈，充满节日与繁华气息；',
+      '禁止室内灯光亮度高于室外灯光。',
+      '```',
     ].join('\n'),
   },
 ]

@@ -28,9 +28,10 @@ export default defineEventHandler(async (event) => {
       customPrompt,
       customNegativePrompt,
       revise,
+      prompt,
     } = validateGenerateRequestBody(body)
 
-    const prompt = buildNightPrompt(customPrompt)
+    const finalPrompt = buildNightPrompt(customPrompt || prompt)
     const negativePrompt = buildNightNegativePrompt(customNegativePrompt)
     const normalizedOriginalUrl = originalUrl || undefined
 
@@ -45,7 +46,7 @@ export default defineEventHandler(async (event) => {
     const result = await submitNightImageJob({
       originalUrl: normalizedOriginalUrl,
       originalObjectKey,
-      prompt,
+      prompt: finalPrompt,
       negativePrompt,
       revise,
       imageWidth,

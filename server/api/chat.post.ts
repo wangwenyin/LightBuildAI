@@ -27,6 +27,7 @@ export default defineEventHandler(async (event) => {
     rewriteAttempts: config.agentRewriteAttempts,
     enableGenerate: config.agentEnableGenerate,
     mockLlm: config.agentMockLlm,
+    mockMode: config.agentMockMode as 'default' | 'withGenerate' | undefined,
     generate: {
       secretId: config.tencentcloudSecretId,
       secretKey: config.tencentcloudSecretKey,

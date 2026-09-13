@@ -33,5 +33,7 @@ export default defineNuxtConfig({
     agentRewriteAttempts: Number.parseInt(process.env.AGENT_REWRITE_ATTEMPTS || '', 10) || 1,
     agentEnableGenerate: process.env.AGENT_ENABLE_GENERATE === 'true',
     agentMockLlm: process.env.AGENT_MOCK_LLM === 'true',
+    // Mock 剧本变体：withGenerate 时会多走一次出图工具，便于本地验收出图链路
+    agentMockMode: (process.env.AGENT_MOCK_MODE === 'withGenerate' ? 'withGenerate' : 'default') as 'default' | 'withGenerate',
   },
 })

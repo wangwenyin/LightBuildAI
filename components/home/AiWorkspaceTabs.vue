@@ -84,6 +84,11 @@ onMounted(async () => {
 function resolveWorkspaceTab(tabQuery: unknown): WorkspaceTab {
   return tabQuery === 'chat' ? 'chat' : 'image'
 }
+
+/** 子面板（如 AI 聊天出图后）请求切到另一个 tab */
+function handleSwitchTab(tab: WorkspaceTab) {
+  activeTab.value = tab
+}
 </script>
 
 <template>
@@ -145,6 +150,7 @@ function resolveWorkspaceTab(tabQuery: unknown): WorkspaceTab {
             :key="activeTab"
             :mobile-sidebar-open="isMobileSidebarOpen"
             @update:mobile-sidebar-open="isMobileSidebarOpen = $event"
+            @switch-tab="handleSwitchTab"
           />
         </KeepAlive>
       </div>

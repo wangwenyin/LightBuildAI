@@ -5,6 +5,7 @@ import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
 import { useLocalImageDraft } from '~/composables/useLocalImageDraft'
 import { usePendingReloadResume } from '~/composables/usePendingReloadResume'
 import { useLocalImageHistory } from '~/composables/useLocalImageHistory'
+import { useWorkspaceBridge } from '~/composables/useWorkspaceBridge'
 
 const props = withDefaults(defineProps<{
   mobileSidebarOpen?: boolean
@@ -58,6 +59,7 @@ const {
 } = useLocalImageHistory()
 const { clearDraft, loadDraft, saveDraft } = useLocalImageDraft()
 const { clearPendingReload, consumePendingReload, markPendingReload } = usePendingReloadResume('image')
+const { pendingHandoff, consumeHandoff } = useWorkspaceBridge()
 const MAX_CUSTOM_PROMPT_LENGTH = 10000
 
 const isSidebarExpanded = shallowRef(true)
@@ -112,7 +114,7 @@ const stageTitle = computed(() => {
     return '参考原图'
   }
 
-  return '上传参考图，开始夜景生成'
+  return '上传参考图，或直接输入提示词生成'
 })
 
 const recentRecords = computed(() => records.value.map(record => ({
@@ -135,8 +137,22 @@ const imageWrapperClasses = computed(() => ({
 const isGenerateDisabled = computed(() => (
   isRestoringHistory.value
   || isPromptTooLong.value
-  || (!isLoading.value && !hasSourceImage.value)
+  || (!isLoading.value && !hasPromptToGenerate.value)
 ))
+
+/** 是否具备可出图的条件：有参考图，或填写了提示词（支持纯文生图） */
+const hasPromptToGenerate = computed(() => Boolean(customPrompt.value.trim()))
+const generateRequirementHint = computed(() => {
+  if (hasSourceImage.value) {
+    return '将基于参考图渲染夜景；不传参考图则为纯文字生成。'
+  }
+
+  if (hasPromptToGenerate.value) {
+    return '未上传参考图，将按提示词进行纯文字夜景生成。'
+  }
+
+  return '请上传参考图，或在下方填写提示词后直接生成（纯文字出图）。'
+})
 const previewImageUrl = computed(() => displayedImageUrl.value || '')
 const previewImageTitle = computed(() => {
   if (activeView.value === 'result' && hasResultImage.value) {
@@ -151,6 +167,76 @@ const previewImageTitle = computed(() => {
 })
 const trimmedPromptLength = computed(() => customPrompt.value.trim().length)
 const isPromptTooLong = computed(() => trimmedPromptLength.value > MAX_CUSTOM_PROMPT_LENGTH)
+
+/** 从「AI 聊天」交接过来的状态提示 */
+const handoffNotice = shallowRef('')
+let handoffNoticeTimer: number | null = null
+
+function applyHandoff() {
+  const handoff = consumeHandoff()
+
+  if (!handoff) {
+    return
+  }
+
+  // 1) 回填提示词（Agent 打磨后的最终版）
+  if (handoff.prompt) {
+    customPrompt.value = handoff.prompt
+  }
+
+  // 2) 已有任务/结果图：直接恢复现场，用户无需重新出图
+  if (handoff.imageUrl || handoff.taskId) {
+    restoreHistorySnapshot({
+      prompt: handoff.prompt || customPrompt.value,
+      taskId: handoff.taskId,
+      resultImageUrl: handoff.imageUrl,
+      status: handoff.imageUrl ? '生成完成' : '已从 AI 聊天接管任务',
+      activeView: handoff.imageUrl ? 'result' : 'source',
+    })
+  }
+
+  handoffNotice.value = handoff.imageUrl
+    ? '已从 AI 聊天带入本次出图结果，可直接下载或微调参数重新生成。'
+    : handoff.taskId
+      ? '已从 AI 聊天带入提示词与任务，正在同步渲染进度。'
+      : '已从 AI 聊天带入提示词，确认参数后即可出图。'
+
+  if (handoffNoticeTimer) {
+    window.clearTimeout(handoffNoticeTimer)
+  }
+
+  handoffNoticeTimer = window.setTimeout(() => {
+    handoffNotice.value = ''
+    handoffNoticeTimer = null
+  }, 8000)
+
+  // 3) 若只有任务、还没有结果图，就继续轮询到出图为止
+  if (!handoff.imageUrl && handoff.taskId) {
+    void resumePendingTask(handoff.taskId, sessionId.value)
+  }
+}
+
+function dismissHandoffNotice() {
+  handoffNotice.value = ''
+
+  if (handoffNoticeTimer) {
+    window.clearTimeout(handoffNoticeTimer)
+    handoffNoticeTimer = null
+  }
+}
+
+// tab 被 KeepAlive 缓存，首次挂载与每次重新激活都要检查是否有新交接
+watch(pendingHandoff, (next) => {
+  if (next) {
+    applyHandoff()
+  }
+}, { immediate: true })
+
+onActivated(() => {
+  if (pendingHandoff.value) {
+    applyHandoff()
+  }
+})
 
 onMounted(() => {
   setupMobileViewportWatcher()
@@ -217,6 +303,10 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  if (handoffNoticeTimer) {
+    window.clearTimeout(handoffNoticeTimer)
+    handoffNoticeTimer = null
+  }
   window.removeEventListener('beforeunload', handleBeforeUnload)
   window.removeEventListener('keydown', handleWindowKeydown)
   unbindViewportListener(mobileViewportQuery, handleMobileViewportChange)
@@ -1088,9 +1178,9 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 
             <label v-else class="empty-state" for="source-file-input">
               <span class="empty-badge">NIGHT</span>
-              <strong class="empty-title">拖入或上传一张白天参考图</strong>
+              <strong class="empty-title">拖入 / 上传白天参考图（选填）</strong>
               <span class="empty-description">
-                建议选择主体清晰、透视明确的商业街景或建筑立面，以获得更稳定、更真实的夜景表达。
+                上传参考图可获得更稳定的实景夜景改造效果；也可以不上传，直接在下方填写提示词进行纯文字夜景生成。
               </span>
             </label>
           </div>
@@ -1114,6 +1204,19 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
         </div>
         <div ref="promptShellElement" class="prompt-shell">
           <section class="prompt-card">
+            <div v-if="handoffNotice" class="handoff-banner" role="status" aria-live="polite">
+              <span class="handoff-banner__badge">来自 AI 聊天</span>
+              <span class="handoff-banner__text">{{ handoffNotice }}</span>
+              <button
+                class="handoff-banner__close ui-button-reset"
+                type="button"
+                aria-label="关闭提示"
+                @click="dismissHandoffNotice"
+              >
+                ×
+              </button>
+            </div>
+
             <div class="prompt-header">
             <p class="section-label">
               Prompt Composer
@@ -1286,6 +1389,56 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   flex-shrink: 0;
   padding-top: 16px;
   background: linear-gradient(180deg, rgba(250, 250, 249, 0), rgba(250, 250, 249, 0.96) 32%);
+}
+
+.handoff-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(22, 163, 74, 0.28);
+  border-radius: 12px;
+  background: rgba(22, 163, 74, 0.07);
+}
+
+.handoff-banner__badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(22, 163, 74, 0.16);
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.handoff-banner__text {
+  flex: 1;
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.handoff-banner__close {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  color: #6b7280;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.handoff-banner__close:hover {
+  background: rgba(17, 24, 39, 0.06);
+  color: #111827;
 }
 
 .section-label {

@@ -48,10 +48,13 @@ export async function runAgent(params: {
   const streamingCaller: StreamingModelCaller = options.callModel
     ? (async p => options.callModel!(p))
     : useMock
-      ? createScriptedCaller({ stream: true })
+      ? createScriptedCaller({ stream: true, withGenerate: options.mockMode === 'withGenerate' })
       : streamTokenHubWithTools
 
-  const fallbackCaller: ModelCaller = options.callModel ?? (useMock ? createScriptedCaller() : callTokenHubWithTools)
+  const fallbackCaller: ModelCaller = options.callModel
+    ?? (useMock
+      ? createScriptedCaller({ withGenerate: options.mockMode === 'withGenerate' })
+      : callTokenHubWithTools)
 
   const tools = buildToolSpecs()
   const maxIterations = Math.max(1, options.maxIterations)

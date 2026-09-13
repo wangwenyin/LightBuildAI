@@ -29,6 +29,7 @@ export type ValidatedGenerateBody = {
   imageHeight?: number
   customPrompt?: string
   customNegativePrompt?: string
+  prompt?: string
   revise?: boolean
 }
 
@@ -108,6 +109,11 @@ export function validateGenerateRequestBody(body: unknown): ValidatedGenerateBod
     maxLength: MAX_PROMPT_LENGTH,
     trim: true,
   })
+  const prompt = normalizeOptionalString(normalizedBody.prompt, {
+    fieldName: 'prompt',
+    maxLength: MAX_PROMPT_LENGTH,
+    trim: true,
+  })
   const revise = normalizeOptionalBoolean(normalizedBody.revise, 'revise')
 
   if ((imageWidth === undefined) !== (imageHeight === undefined)) {
@@ -128,6 +134,7 @@ export function validateGenerateRequestBody(body: unknown): ValidatedGenerateBod
     imageHeight: ensureDimensionRange(imageHeight, 'imageHeight'),
     customPrompt,
     customNegativePrompt,
+    prompt,
     revise,
   }
 }

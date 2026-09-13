@@ -4,6 +4,7 @@ import RecentRecordsPanel from '~/components/shared/RecentRecordsPanel.vue'
 import { useLocalChatDraft } from '~/composables/useLocalChatDraft'
 import { usePendingReloadResume } from '~/composables/usePendingReloadResume'
 import { useLocalChatHistory } from '~/composables/useLocalChatHistory'
+import { useWorkspaceBridge } from '~/composables/useWorkspaceBridge'
 
 import type { AgentStep, AgentStreamEvent, ChatResponsePayload } from '~/shared/agent'
 
@@ -15,7 +16,10 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:mobileSidebarOpen': [value: boolean]
+  'switch-tab': [value: 'image' | 'chat']
 }>()
+
+const { handoffToImageStudio: handoffToImageStudioBridge } = useWorkspaceBridge()
 
 type ChatRole = 'user' | 'assistant'
 
@@ -673,6 +677,125 @@ function countToolSteps(steps?: AgentStep[]) {
   return steps ? steps.filter(step => step.type === 'tool').length : 0
 }
 
+/** 从消息的步骤里提取「Agent 出图」结果（若本次对话触发了出图） */
+function extractGeneration(steps?: AgentStep[]) {
+  if (!steps) {
+    return null
+  }
+
+  const toolStep = [...steps]
+    .reverse()
+    .find(step => step.type === 'tool' && step.name === 'generate_night_image')
+
+  if (!toolStep || toolStep.type !== 'tool') {
+    return null
+  }
+
+  const result = toolStep.result as Record<string, unknown> | null
+
+  if (!result || typeof result !== 'object') {
+    return null
+  }
+
+  return {
+    enabled: result.enabled !== false,
+    ok: toolStep.ok,
+    taskId: typeof result.taskId === 'string' ? result.taskId : '',
+    status: typeof result.status === 'string' ? result.status : '',
+    imageUrl: typeof result.imageUrl === 'string' ? result.imageUrl : '',
+    provider: typeof result.provider === 'string' ? result.provider : '',
+    message: typeof result.message === 'string' ? result.message : '',
+    error: typeof result.error === 'string' ? result.error : '',
+  }
+}
+
+/** 从消息步骤里提取 Agent 最终产出的提示词文本（代码块优先） */
+function extractPromptText(steps?: AgentStep[]) {
+  const finalStep = steps ? [...steps].reverse().find(step => step.type === 'final' && step.text) : null
+
+  if (!finalStep || finalStep.type !== 'final') {
+    return ''
+  }
+
+  const match = finalStep.text.match(/```[a-z]*\n?([\s\S]*?)```/i)
+
+  return match?.[1]?.trim() || ''
+}
+
+/** 把 Agent 的成果带到「夜景生成」tab 继续操作 */
+function handoffToImageStudio(message: ChatMessage) {
+  handoffGenerationToImageStudio({
+    generation: extractGeneration(message.steps),
+    prompt: extractPromptText(message.steps),
+  })
+}
+
+function handoffGenerationToImageStudio(payload: {
+  generation: ReturnType<typeof extractGeneration>
+  prompt: string
+}) {
+  const { generation, prompt } = payload
+
+  handoffToImageStudioBridge({
+    prompt: prompt || undefined,
+    taskId: generation?.taskId || undefined,
+    imageUrl: generation?.imageUrl || undefined,
+  })
+  emit('switch-tab', 'image')
+}
+
+/** 直接在聊天里出图（Agent 未触发时，用最终提示词就地补一次） */
+const isInlineGenerating = shallowRef(false)
+const inlineGenerateError = shallowRef('')
+
+async function generateInlineFromMessage(message: ChatMessage) {
+  const prompt = extractPromptText(message.steps) || message.content
+
+  if (!prompt.trim() || isInlineGenerating.value) {
+    return
+  }
+
+  isInlineGenerating.value = true
+  inlineGenerateError.value = ''
+
+  try {
+    const response = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: prompt.trim() }),
+    })
+
+    const body = await response.json().catch(() => null) as Record<string, unknown> | null
+
+    if (!response.ok) {
+      throw new Error(typeof body?.message === 'string' ? body.message : `出图请求失败 (${response.status})`)
+    }
+
+    const taskId = typeof body?.taskId === 'string' ? body.taskId : ''
+    const imageUrl = typeof body?.imageUrl === 'string' ? body.imageUrl : ''
+
+    if (!taskId && !imageUrl) {
+      throw new Error('出图服务未返回任务信息，请稍后重试')
+    }
+
+    message.steps = [
+      ...(message.steps || []),
+      {
+        type: 'tool',
+        name: 'generate_night_image',
+        args: { prompt: prompt.trim() },
+        result: { ...(body || {}), taskId, imageUrl, status: body?.status ?? 'submitted' },
+        ok: true,
+        durationMs: 0,
+      },
+    ]
+  } catch (error) {
+    inlineGenerateError.value = error instanceof Error ? error.message : '出图失败，请稍后重试'
+  } finally {
+    isInlineGenerating.value = false
+  }
+}
+
 function summarizeStepResult(step: AgentStep) {
   if (step.type !== 'tool') {
     return ''
@@ -891,6 +1014,111 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
                 </ul>
                 <pre v-else class="message-code-block"><code>{{ block.content }}</code></pre>
               </template>
+
+              <section
+                v-if="message.role === 'assistant' && extractGeneration(message.steps)"
+                class="generation-card"
+              >
+                <header class="generation-card__head">
+                  <span
+                    class="generation-card__badge"
+                    :class="{
+                      'generation-card__badge--live': extractGeneration(message.steps)?.ok,
+                      'generation-card__badge--error': !extractGeneration(message.steps)?.ok,
+                    }"
+                  >
+                    {{ extractGeneration(message.steps)?.ok ? '已提交渲染' : '渲染未完成' }}
+                  </span>
+                  <span class="generation-card__title">夜景渲染</span>
+                </header>
+
+                <a
+                  v-if="extractGeneration(message.steps)?.imageUrl"
+                  class="generation-card__preview"
+                  :href="extractGeneration(message.steps)?.imageUrl"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  <img :src="extractGeneration(message.steps)?.imageUrl" alt="Agent 出图结果">
+                </a>
+
+                <dl class="generation-card__meta">
+                  <div v-if="extractGeneration(message.steps)?.taskId" class="generation-card__meta-row">
+                    <dt>任务 ID</dt>
+                    <dd>{{ extractGeneration(message.steps)?.taskId }}</dd>
+                  </div>
+                  <div v-if="extractGeneration(message.steps)?.status" class="generation-card__meta-row">
+                    <dt>状态</dt>
+                    <dd>{{ extractGeneration(message.steps)?.status }}</dd>
+                  </div>
+                  <div v-if="extractGeneration(message.steps)?.provider" class="generation-card__meta-row">
+                    <dt>通道</dt>
+                    <dd>{{ extractGeneration(message.steps)?.provider }}</dd>
+                  </div>
+                </dl>
+
+                <p
+                  v-if="extractGeneration(message.steps)?.error || extractGeneration(message.steps)?.message"
+                  class="generation-card__note"
+                >
+                  {{ extractGeneration(message.steps)?.error || extractGeneration(message.steps)?.message }}
+                </p>
+
+                <div class="generation-card__actions">
+                  <button
+                    class="generation-card__button generation-card__button--primary ui-button-reset"
+                    type="button"
+                    @click="handoffToImageStudio(message)"
+                  >
+                    在「夜景生成」中查看
+                  </button>
+                  <a
+                    v-if="extractGeneration(message.steps)?.imageUrl"
+                    class="generation-card__button ui-button-reset"
+                    :href="extractGeneration(message.steps)?.imageUrl"
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    查看原图
+                  </a>
+                </div>
+              </section>
+
+              <section
+                v-else-if="message.role === 'assistant' && !isLoading && extractPromptText(message.steps)"
+                class="generation-card generation-card--prompt"
+              >
+                <header class="generation-card__head">
+                  <span class="generation-card__badge">提示词就绪</span>
+                  <span class="generation-card__title">这条提示词还没有渲染</span>
+                </header>
+
+                <p class="generation-card__note">
+                  Agent 已给出自检通过的提示词，但本次没有触发出图。可以直接在这里渲染，或带到「夜景生成」里微调参数。
+                </p>
+
+                <p v-if="inlineGenerateError" class="generation-card__note generation-card__note--error">
+                  {{ inlineGenerateError }}
+                </p>
+
+                <div class="generation-card__actions">
+                  <button
+                    class="generation-card__button generation-card__button--primary ui-button-reset"
+                    type="button"
+                    :disabled="isInlineGenerating"
+                    @click="generateInlineFromMessage(message)"
+                  >
+                    {{ isInlineGenerating ? '正在渲染…' : '直接出图' }}
+                  </button>
+                  <button
+                    class="generation-card__button ui-button-reset"
+                    type="button"
+                    @click="handoffToImageStudio(message)"
+                  >
+                    去「夜景生成」微调
+                  </button>
+                </div>
+              </section>
             </div>
           </article>
 
@@ -1318,6 +1546,152 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.generation-card {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff, #fafaf9);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
+}
+
+.generation-card--prompt {
+  border-style: dashed;
+  background: #fafaf9;
+}
+
+.generation-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.generation-card__badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.06);
+  color: #4b5563;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.generation-card__badge--live {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+}
+
+.generation-card__badge--error {
+  background: rgba(185, 28, 28, 0.1);
+  color: #b91c1c;
+}
+
+.generation-card__title {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.generation-card__preview {
+  display: block;
+  overflow: hidden;
+  margin-bottom: 12px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 10px;
+  background: #0b0b0f;
+}
+
+.generation-card__preview img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+}
+
+.generation-card__meta {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.generation-card__meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.generation-card__meta-row dt {
+  flex-shrink: 0;
+  width: 56px;
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.generation-card__meta-row dd {
+  margin: 0;
+  color: #374151;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}
+
+.generation-card__note {
+  margin: 0 0 12px;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.generation-card__note--error {
+  color: #b91c1c;
+}
+
+.generation-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.generation-card__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid rgba(17, 24, 39, 0.14);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+}
+
+.generation-card__button:hover:not(:disabled) {
+  border-color: rgba(17, 24, 39, 0.3);
+  background: #f9fafb;
+}
+
+.generation-card__button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.generation-card__button--primary {
+  border-color: transparent;
+  background: #111827;
+  color: #ffffff;
+}
+
+.generation-card__button--primary:hover:not(:disabled) {
+  background: #1f2937;
 }
 
 .live-status {

@@ -5,6 +5,8 @@ import { useLocalChatDraft } from '~/composables/useLocalChatDraft'
 import { usePendingReloadResume } from '~/composables/usePendingReloadResume'
 import { useLocalChatHistory } from '~/composables/useLocalChatHistory'
 
+import type { AgentStep, ChatResponsePayload } from '~/shared/agent'
+
 const props = withDefaults(defineProps<{
   mobileSidebarOpen?: boolean
 }>(), {
@@ -21,13 +23,10 @@ type ChatMessage = {
   id: string
   role: ChatRole
   content: string
+  steps?: AgentStep[]
 }
 
-type ChatResponse = {
-  reply: string
-  model: string
-  requestId?: string
-}
+type ChatResponse = ChatResponsePayload
 
 type MessageBlock =
   | { type: 'heading', level: 1 | 2 | 3, content: string }
@@ -224,6 +223,7 @@ async function sendMessage(messageOverride?: string) {
       id: createMessageId(),
       role: 'assistant',
       content: response.reply,
+      steps: response.steps ?? [],
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : '发送失败，请稍后重试'
@@ -537,6 +537,68 @@ function getHeadingTag(block: HeadingBlock) {
   return block.level === 1 ? 'h2' : block.level === 2 ? 'h3' : 'h4'
 }
 
+const TOOL_LABELS: Record<string, string> = {
+  get_prompt_guide: '检索提示词规范',
+  compose_night_prompt: '组装夜景提示词',
+  review_night_prompt: '自检提示词',
+  generate_night_image: '触发夜景渲染',
+}
+
+function getToolLabel(name: string) {
+  return TOOL_LABELS[name] || name
+}
+
+function countToolSteps(steps?: AgentStep[]) {
+  return steps ? steps.filter(step => step.type === 'tool').length : 0
+}
+
+function summarizeStepResult(step: AgentStep) {
+  if (step.type !== 'tool') {
+    return ''
+  }
+
+  const result = step.result
+
+  if (!result || typeof result !== 'object') {
+    return String(result ?? '')
+  }
+
+  const record = result as Record<string, unknown>
+
+  if (typeof record.error === 'string') {
+    return `错误：${record.error}`
+  }
+
+  if (record.enabled === false && typeof record.message === 'string') {
+    return record.message
+  }
+
+  const parts: string[] = []
+
+  if (typeof record.score === 'number') {
+    parts.push(`得分 ${record.score}`)
+  }
+
+  if (Array.isArray(record.missing) && record.missing.length > 0) {
+    parts.push(`缺失 ${record.missing.length} 项`)
+  }
+
+  if (typeof record.taskId === 'string') {
+    parts.push(`任务 ${record.taskId}`)
+  }
+
+  if (typeof record.status === 'string') {
+    parts.push(`状态 ${record.status}`)
+  }
+
+  if (parts.length === 0) {
+    const text = JSON.stringify(result)
+    return text.length > 120 ? `${text.slice(0, 120)}...` : text
+  }
+
+  return parts.join(' · ')
+}
+
 function bindViewportListener(query: MediaQueryList | null, listener: (event: MediaQueryListEvent) => void) {
   if (!query) {
     return
@@ -621,7 +683,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
             今天想一起打磨哪一段夜景表达？
           </h1>
           <p class="welcome-description">
-            保留清晰的对话结构与克制的留白，让讨论更聚焦在方案、表达与判断本身。
+            描述你的夜景需求：我会先检索提示词规范，再组装成完整提示词并做自检，最后把可直接使用的结果给你。
           </p>
         </div>
 
@@ -636,6 +698,41 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
               {{ message.role === 'assistant' ? 'LB' : '你' }}
             </div>
             <div class="message-bubble">
+              <details
+                v-if="message.role === 'assistant' && message.steps && message.steps.length"
+                class="agent-trace"
+              >
+                <summary class="agent-trace__summary">
+                  思考过程 · {{ countToolSteps(message.steps) }} 次工具调用
+                </summary>
+                <ol class="agent-trace__list">
+                  <li
+                    v-for="(step, stepIndex) in message.steps"
+                    :key="`${message.id}-step-${stepIndex}`"
+                    class="agent-trace__item"
+                  >
+                    <template v-if="step.type === 'thought'">
+                      <span class="agent-trace__badge">思考</span>
+                      <span class="agent-trace__text">{{ step.text }}</span>
+                    </template>
+                    <template v-else-if="step.type === 'tool'">
+                      <span class="agent-trace__badge" :class="{ 'agent-trace__badge--error': !step.ok }">
+                        {{ step.ok ? '工具' : '失败' }}
+                      </span>
+                      <span class="agent-trace__text">
+                        <strong>{{ getToolLabel(step.name) }}</strong>
+                        <em class="agent-trace__meta">{{ step.durationMs }}ms</em>
+                        <span class="agent-trace__result">{{ summarizeStepResult(step) }}</span>
+                      </span>
+                    </template>
+                    <template v-else>
+                      <span class="agent-trace__badge agent-trace__badge--final">结论</span>
+                      <span class="agent-trace__text">已给出最终回答</span>
+                    </template>
+                  </li>
+                </ol>
+              </details>
+
               <template v-for="(block, blockIndex) in parseMessageBlocks(message.content)" :key="`${message.id}-${blockIndex}`">
                 <component
                   v-if="isHeadingBlock(block)"
@@ -1001,6 +1098,82 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   background: rgba(17, 24, 39, 0.04);
   color: #111827;
   font-size: 0.92em;
+}
+
+.agent-trace {
+  margin-bottom: 14px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 14px;
+  background: rgba(17, 24, 39, 0.02);
+}
+
+.agent-trace__summary {
+  padding: 10px 14px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  user-select: none;
+}
+
+.agent-trace__list {
+  margin: 0;
+  padding: 0 14px 12px;
+  list-style: none;
+}
+
+.agent-trace__item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 0;
+  color: #374151;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.agent-trace__item + .agent-trace__item {
+  border-top: 1px dashed rgba(17, 24, 39, 0.06);
+}
+
+.agent-trace__badge {
+  flex-shrink: 0;
+  min-width: 38px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.08);
+  color: #111827;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.agent-trace__badge--error {
+  background: rgba(185, 28, 28, 0.12);
+  color: #b91c1c;
+}
+
+.agent-trace__badge--final {
+  background: rgba(21, 128, 61, 0.12);
+  color: #15803d;
+}
+
+.agent-trace__text {
+  min-width: 0;
+}
+
+.agent-trace__meta {
+  margin-left: 6px;
+  color: #9ca3af;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.agent-trace__result {
+  display: block;
+  color: #6b7280;
+  word-break: break-word;
 }
 
 .message-bubble--loading {

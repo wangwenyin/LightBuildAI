@@ -27,5 +27,10 @@ export default defineNuxtConfig({
     ossEndpoint: process.env.OSS_ENDPOINT,
     ossDir: process.env.OSS_DIR || 'uploads',
     hunyuanMaxPollDurationMs: Number.parseInt(process.env.HUNYUAN_MAX_POLL_DURATION_MS || '', 10) || 300000,
+    // ---- Agent 运行时配置 ----
+    agentChatModel: process.env.AGENT_CHAT_MODEL || 'deepseek-v4-flash',
+    agentMaxIterations: Number.parseInt(process.env.AGENT_MAX_ITERATIONS || '', 10) || 6,
+    agentEnableGenerate: process.env.AGENT_ENABLE_GENERATE === 'true',
+    agentMockLlm: process.env.AGENT_MOCK_LLM === 'true',
   },
 })

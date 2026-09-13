@@ -1,7 +1,11 @@
+import type { AgentStep } from '~/shared/agent'
+
 export type LocalChatMessage = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  /** Agent 的思考 / 工具调用轨迹（仅 assistant 消息可能有） */
+  steps?: AgentStep[]
 }
 
 export type LocalChatSession = {

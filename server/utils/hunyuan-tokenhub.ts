@@ -9,6 +9,23 @@ import {
 } from './hunyuan-shared'
 import { downloadOSSObject } from './oss'
 
+/**
+ * 自定义 Undici Agent：显式设置连接超时。
+ * Vercel（海外节点）调用腾讯国内 API 时，默认 ~10s 的 TCP 连接超时
+ * 会直接抛 UND_ERR_CONNECT_TIMEOUT。加大到 30s 给跨境链路更多时间窗口。
+ *
+ * 注意：如果腾讯 API 对 Vercel IP 段不可达（GFW/运营商策略），
+ * 再长的 connectTimeout 也无法解决——此时需要「国内中转」方案（见下方 catch 分支提示）。
+ */
+let tokenHubAgent: any = undefined
+try {
+  // 用同步 require 而非顶层 await import——Nitro 默认目标 es2019 不支持 top-level await
+  const undici = require('undici') as any
+  tokenHubAgent = new undici.Agent({ connectTimeout: 30_000 })
+} catch {
+  // undici 在部分 Node.js 运行时可能不可用，降级为无 Agent（使用默认 fetch 行为）
+}
+
 const MAX_REFERENCE_IMAGE_BYTES = 1024 * 1024
 /**
  * 混元生图 Hy-Image-3.0（model=hy-image-v3）是**同步接口**：
@@ -106,7 +123,7 @@ export async function submitTokenHubReferenceImageJob({
   const timer = setTimeout(() => controller.abort(), TOKENHUB_SYNC_TIMEOUT_MS)
 
   try {
-    const response = await fetch(TOKENHUB_GENERATE_URL, {
+    const fetchOptions: any = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -114,7 +131,12 @@ export async function submitTokenHubReferenceImageJob({
       },
       body: JSON.stringify(payload),
       signal: controller.signal,
-    })
+    }
+    if (tokenHubAgent) {
+      fetchOptions.dispatcher = tokenHubAgent
+    }
+
+    const response = await fetch(TOKENHUB_GENERATE_URL, fetchOptions)
 
     const data = await parseJsonResponse(response, 'TokenHub 同步生图接口')
     // 无论成功失败，都把上游原始响应打到服务端日志，便于排查字段名差异。
@@ -160,6 +182,31 @@ export async function submitTokenHubReferenceImageJob({
           message: `TokenHub 同步生图超时（${TOKENHUB_SYNC_TIMEOUT_MS / 1000}s）。请稍后重试，或换一张更小的参考图。`,
         },
       })
+    }
+
+    // 跨境网络不可达时的特殊提示（UND_ERR_CONNECT_TIMEOUT / ECONNREFUSED 等）
+    if (error instanceof Error) {
+      const cause: any = (error as any).cause
+      const causeCode = typeof cause?.code === 'string' ? cause.code : ''
+      const isConnectError = causeCode === 'UND_ERR_CONNECT_TIMEOUT'
+        || causeCode === 'ECONNREFUSED'
+        || causeCode === 'ENOTFOUND'
+        || error.message.includes('CONNECT_TIMEOUT')
+        || error.message.includes('ECONNREFUSED')
+        || error.message.includes('fetch failed')
+
+      if (isConnectError) {
+        console.error('[tokenhub] 连接 TokenHub API 失败（可能为跨境网络不可达）:', causeCode || error.message)
+        throw createError({
+          statusCode: 502,
+          statusMessage: `无法连接到生图服务（${causeCode || 'NETWORK_ERROR'}）。如果部署在 Vercel 等海外平台，需要配置国内中转服务。`,
+          data: {
+            message: `无法连接到生图服务。错误码: ${causeCode || 'UNKNOWN'}。这通常是因为 Vercel 等海外服务器无法直接访问腾讯国内 API，需要部署一个国内中转层。`,
+            code: causeCode || 'UNKNOWN',
+            hint: 'PROXY_REQUIRED',
+          },
+        })
+      }
     }
 
     const message = error instanceof Error ? error.message : String(error)

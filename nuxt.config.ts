@@ -7,7 +7,17 @@ export default defineNuxtConfig({
   nitro: {
     preset: 'vercel', // 显式指定 Vercel 预设，避免自动检测异常
     vercel: {
-      regions: ['hkg1'] // 选香港节点，国内访问更快（可选）
+      regions: ['hkg1'], // 边缘函数区域（serverless 函数区域见下面 functions.regions）
+      // 关键：函数时长/资源必须在 Nitro 层配置。Nitro 会把它写进构建产物
+      // .vercel/output/functions/__fallback.func/.vc-config.json，路径永远匹配。
+      // ⚠️ 不要在 vercel.json 的 functions 里用 "server/api/xxx.ts" 这类源码路径 ——
+      // 那是标准项目（api/ 目录）的写法；Nuxt 会被 Nitro 打包成单个 __fallback 函数，
+      // 因而报 "pattern ... doesn't match any Serverless Functions" 构建失败（2026-09 踩坑）。
+      functions: {
+        maxDuration: 120, // 生图 / Agent 聊天为长任务；Hobby 上限 300s（Fluid compute）
+        memory: 1024,
+        regions: ['hkg1'], // serverless 函数部署区域（顶部 vercel.regions 仅对 edge 生效）
+      },
     }
   },
   experimental: {

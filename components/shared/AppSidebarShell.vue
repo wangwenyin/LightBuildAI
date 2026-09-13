@@ -541,7 +541,7 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
 .app-sidebar-shell--collapsed .sidebar-toggle {
   /* 折叠态：展开按钮精确覆盖在品牌 logo（42×42 brand-mark）正上方 */
   position: absolute;
-  top: 0;
+  top: -1px;
   left: 50%;
   width: 44px;
   height: 44px;

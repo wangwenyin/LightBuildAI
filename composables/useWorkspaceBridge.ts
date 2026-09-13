@@ -2,10 +2,13 @@
  * 跨 tab 的工作台状态桥（单例）。
  *
  * 背景：`夜景生成` 与 `AI 聊天` 是两个 tab，组件由 KeepAlive 缓存、彼此不直接通信。
- * 聊天里 Agent 出图后，需要把「提示词 / 任务 / 结果图」带到生成面板继续操作，
- * 因此这里放一个模块级的共享状态（Nuxt 里模块只会被求值一次，等效单例）。
  *
- * 注意：这里只放「跨 tab 传递意图」的轻量状态，不复制两个面板各自的大状态。
+ * 双向通道：
+ * - **chat → image**：聊天里 Agent 出图后，把「提示词 / 任务 / 结果图」带到生成面板继续操作。
+ * - **image → chat**（P0-3）：生成面板里出图完成后，把结果回流到聊天，
+ *   让那条对话的卡片能更新成「渲染完成」，形成闭环。
+ *
+ * 注意：这里只放「跨 tab 传递意图」的轻量状态，任务的生命周期由 `useTaskCenter` 统一管理。
  */
 
 export type WorkspaceHandoff = {
@@ -18,19 +21,30 @@ export type WorkspaceHandoff = {
   /** 已知的结果图 URL（若已有） */
   imageUrl?: string
   /** 来源标记，便于埋点或提示文案 */
-  source: 'chat-agent'
+  source: 'chat-agent' | 'chat-inline'
   /** 时间戳，用于判断是否是「新的一次交接」 */
   at: number
 }
 
+/** 生成面板 → 聊天的回流事件 */
+export type ImageResultFeedback = {
+  taskId: string
+  imageUrl: string
+  prompt: string
+  /** 出图来源，聊天侧据此决定是否要更新某条消息 */
+  origin: 'chat-agent' | 'chat-inline' | 'image-studio'
+  at: number
+}
+
 const pendingHandoff = shallowRef<WorkspaceHandoff | null>(null)
+const pendingFeedback = shallowRef<ImageResultFeedback | null>(null)
 
 export function useWorkspaceBridge() {
   /** 从聊天面板发起一次交接 */
-  function handoffToImageStudio(payload: Omit<WorkspaceHandoff, 'source' | 'at'>) {
+  function handoffToImageStudio(payload: Omit<WorkspaceHandoff, 'source' | 'at'> & { source?: WorkspaceHandoff['source'] }) {
     pendingHandoff.value = {
       ...payload,
-      source: 'chat-agent',
+      source: payload.source ?? 'chat-agent',
       at: Date.now(),
     }
   }
@@ -48,9 +62,30 @@ export function useWorkspaceBridge() {
     return current
   }
 
+  /** 生成面板出图完成后，回流给聊天 */
+  function publishImageResult(payload: Omit<ImageResultFeedback, 'at'>) {
+    pendingFeedback.value = { ...payload, at: Date.now() }
+  }
+
+  /** 聊天面板消费一次回流 */
+  function consumeImageResult(): ImageResultFeedback | null {
+    const current = pendingFeedback.value
+
+    if (!current) {
+      return null
+    }
+
+    pendingFeedback.value = null
+
+    return current
+  }
+
   return {
     pendingHandoff,
+    pendingFeedback,
     handoffToImageStudio,
     consumeHandoff,
+    publishImageResult,
+    consumeImageResult,
   }
 }

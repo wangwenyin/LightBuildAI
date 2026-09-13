@@ -14,6 +14,18 @@ import type {
 
 type AgentExtendedOptions = AgentOptions & { rewriteAttempts?: number }
 
+/** 工具预算用尽时的提醒：让模型停止规划新动作，准备收尾 */
+const WRAP_UP_INSTRUCTION =
+  '注意：工具调用预算即将用尽。请不要再发起新的工具调用，直接基于已有结果给出完整、可用的最终回答。'
+
+/** 收尾轮指令：此时工具已撤下，模型必须输出最终答案 */
+const FINAL_ROUND_INSTRUCTION =
+  '现在请直接给出最终回答，不要再调用任何工具。要求：\n'
+  + '1. 用简体中文，简洁可用；\n'
+  + '2. 如果已经拿到最终提示词，用代码块完整呈现，方便复制；\n'
+  + '3. 如果本轮已经提交了出图任务，说明任务已提交、成图需要等待，并提示用户可以在「夜景生成」中查看；\n'
+  + '4. 不要再重复工具的执行细节，直接给结论。'
+
 /**
  * Agent 主循环（ReAct）—— 整个「Agent 应用」的心脏。
  *
@@ -58,6 +70,15 @@ export async function runAgent(params: {
 
   const tools = buildToolSpecs()
   const maxIterations = Math.max(1, options.maxIterations)
+  /**
+   * 为「最终回答」预留的收尾轮次。
+   *
+   * 背景：ReAct 循环里每一轮只能做一件事——要么调工具，要么给答案。
+   * 如果 maxIterations 全被工具轮吃掉，模型就没机会输出最终文本，
+   * 只能走 finalizeWithoutTools 兜底，用户会看到「推理步数已达上限」。
+   * 因此把最后一轮单独留出来，明确告知模型「工具已关闭，请直接总结」。
+   */
+  const toolRounds = Math.max(1, maxIterations - 1)
 
   // 上下文 = 系统提示词 + 历史对话 + 本轮用户输入
   const messages: LlmMessage[] = [
@@ -78,11 +99,21 @@ export async function runAgent(params: {
     iterations += 1
     onEvent?.({ type: 'iteration', index: iterations })
 
+    // 最后一轮：撤下工具，并显式要求模型收尾，避免「没机会说话」
+    const isFinalRound = iterations >= maxIterations
+
+    if (isFinalRound && steps.length > 0) {
+      messages.push({
+        role: 'user',
+        content: FINAL_ROUND_INSTRUCTION,
+      })
+    }
+
     let turnText = ''
 
     const result = await streamingCaller({
       messages,
-      tools,
+      tools: isFinalRound ? [] : tools,
       apiKey: options.apiKey || '',
       model: options.model,
       onDelta: (delta) => {
@@ -112,6 +143,11 @@ export async function runAgent(params: {
         iterations,
         truncated: false,
       }
+    }
+
+    // 保护：已是收尾轮却仍返回工具调用（少见，但模型偶发）→ 不再执行，直接兜底收尾
+    if (isFinalRound) {
+      break
     }
 
     // 情况 B：模型要求调用工具 → 记录它的「思考」，执行工具，把结果喂回去
@@ -156,10 +192,15 @@ export async function runAgent(params: {
         messages.push({ role: 'user', content: rewrite.instruction })
       }
     }
+
+    // 工具预算已用尽：下一轮就是收尾轮了，先提醒模型「别再规划新工具」
+    if (iterations >= toolRounds && iterations < maxIterations) {
+      messages.push({ role: 'user', content: WRAP_UP_INSTRUCTION })
+    }
   }
 
   // 达到最大步数仍未收敛：强制让模型不带工具地做一次总结
-  const finalized = await finalizeWithoutTools(fallbackCaller, messages, options)
+  const finalized = await finalizeWithoutTools(fallbackCaller, messages, options, onEvent)
 
   steps.push({ type: 'final', text: finalized })
 
@@ -265,6 +306,7 @@ async function finalizeWithoutTools(
   callModel: ModelCaller,
   messages: LlmMessage[],
   options: AgentOptions,
+  onEvent?: (event: AgentStreamEvent) => void,
 ): Promise<string> {
   try {
     const result = await callModel({
@@ -283,6 +325,8 @@ async function finalizeWithoutTools(
     const text = (result.message.content || '').trim()
 
     if (text) {
+      // 兜底路径也要把文本推给前端，避免「有内容但界面空白」
+      onEvent?.({ type: 'delta', text })
       return text
     }
   } catch {

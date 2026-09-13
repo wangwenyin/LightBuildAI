@@ -59,6 +59,10 @@ const MAX_IMAGE_DIMENSION = 1600
 
 export function useNightImageGenerator() {
   const { ensureSessionId, sessionId } = useClientSession()
+  // 统一任务状态源：本面板提交的任务同时登记进去，
+  // 让聊天侧也能看到进度，并支持结果回流（P0-1 / P0-3）。
+  const { trackTask } = useTaskCenter()
+  const { publishImageResult } = useWorkspaceBridge()
   const sourceFile = shallowRef<File | null>(null)
   const sourceRemoteUrl = shallowRef('')
   const sourceRemoteObjectKey = shallowRef('')
@@ -240,6 +244,13 @@ export function useNightImageGenerator() {
     loadingText.value = '正在恢复生成进度...'
     lastErrorMessage.value = ''
 
+    trackTask({
+      taskId: normalizedTaskId,
+      origin: 'image-studio',
+      prompt: customPrompt.value,
+      sessionId: normalizedSessionId,
+    })
+
     try {
       const task = await $fetch<TaskResponse>('/api/task', {
         query: {
@@ -368,6 +379,16 @@ export function useNightImageGenerator() {
       currentRequestId.value = generateResponse.requestId ?? currentRequestId.value
       currentSeed.value = generateResponse.debug?.seed ?? null
       currentSize.value = generateResponse.debug?.size ?? ''
+
+      // 登记到统一任务状态源：聊天侧据此展示同一任务的进度
+      trackTask({
+        taskId: generateResponse.taskId,
+        origin: 'image-studio',
+        prompt: customPrompt.value,
+        sessionId: activeSessionId,
+        imageUrl: generateResponse.imageUrl,
+      })
+
       taskStatus.value = buildSubmitStatus({
         taskId: generateResponse.taskId,
         hasReferenceImage: generateResponse.debug?.hasReferenceImage ?? Boolean(originalUrl),
@@ -396,6 +417,23 @@ export function useNightImageGenerator() {
 
       activeView.value = 'result'
       taskStatus.value = '生成完成'
+
+      // 出图完成 → 回流给聊天，让发起这条任务的对话卡片能更新成「渲染完成」（P0-3）
+      if (resultUrl.value && currentTaskId.value) {
+        trackTask({
+          taskId: currentTaskId.value,
+          origin: 'image-studio',
+          prompt: customPrompt.value,
+          sessionId: activeSessionId,
+          imageUrl: resultUrl.value,
+        })
+        publishImageResult({
+          taskId: currentTaskId.value,
+          imageUrl: resultUrl.value,
+          prompt: customPrompt.value,
+          origin: 'image-studio',
+        })
+      }
     } catch (error) {
       const message = getErrorMessage(error)
       lastErrorMessage.value = message

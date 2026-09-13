@@ -5,6 +5,8 @@ import { useLocalChatDraft } from '~/composables/useLocalChatDraft'
 import { usePendingReloadResume } from '~/composables/usePendingReloadResume'
 import { useLocalChatHistory } from '~/composables/useLocalChatHistory'
 import { useWorkspaceBridge } from '~/composables/useWorkspaceBridge'
+import { useTaskCenter, type TrackedTask } from '~/composables/useTaskCenter'
+import { useClientSession } from '~/composables/useClientSession'
 
 import type { AgentStep, AgentStreamEvent, ChatResponsePayload } from '~/shared/agent'
 
@@ -19,7 +21,11 @@ const emit = defineEmits<{
   'switch-tab': [value: 'image' | 'chat']
 }>()
 
-const { handoffToImageStudio: handoffToImageStudioBridge } = useWorkspaceBridge()
+const { handoffToImageStudio: handoffToImageStudioBridge, pendingFeedback, consumeImageResult } = useWorkspaceBridge()
+const { trackTask, onTaskUpdate, tasks: trackedTasks } = useTaskCenter()
+/** taskId → 消息 id，用于把统一任务源的更新写回对应消息卡片 */
+const chatTaskLinks = ref<Record<string, string>>({})
+let unsubscribeTaskUpdate: (() => void) | null = null
 
 type ChatRole = 'user' | 'assistant'
 
@@ -46,6 +52,8 @@ type ListBlock = Extract<MessageBlock, { type: 'list' }>
 const inputMessage = shallowRef('')
 const isLoading = shallowRef(false)
 const errorMessage = shallowRef('')
+/** 步数预算用尽提示（非错误，附在消息上展示） */
+const stepLimitNotice = shallowRef('')
 const currentModel = shallowRef('')
 const currentRequestId = shallowRef('')
 const messages = ref<ChatMessage[]>([])
@@ -103,6 +111,9 @@ onMounted(() => {
   loadSessions()
   bindBeforeUnload()
 
+  // 订阅统一任务源：无论任务从哪提交，成图后这里都能把消息卡片刷新（P0-1 / P0-3）
+  unsubscribeTaskUpdate = onTaskUpdate(handleTrackedTaskUpdate)
+
   if (consumePendingReload()) {
     restoreChatDraft()
   } else {
@@ -117,11 +128,64 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  unsubscribeTaskUpdate?.()
+  unsubscribeTaskUpdate = null
   chatStreamResizeObserver?.disconnect()
   chatStreamMutationObserver?.disconnect()
   window.removeEventListener('beforeunload', handleBeforeUnload)
   window.removeEventListener('resize', scheduleChatStreamMeasure)
   unbindViewportListener(mobileViewportQuery, handleMobileViewportChange)
+})
+
+/** 统一任务源更新 → 找到对应消息并回写卡片 */
+function handleTrackedTaskUpdate(task: TrackedTask) {
+  const messageId = chatTaskLinks.value[task.taskId]
+
+  if (!messageId) {
+    return
+  }
+
+  const message = messages.value.find(item => item.id === messageId)
+
+  if (message) {
+    applyTaskResultToMessage(message, task)
+  }
+}
+
+/** 生成面板出图完成后的回流（P0-3）：更新对应消息，或提示用户 */
+function applyImageResultFeedback() {
+  const feedback = consumeImageResult()
+
+  if (!feedback) {
+    return
+  }
+
+  const linkedId = chatTaskLinks.value[feedback.taskId]
+  const tracked = trackedTasks.value[feedback.taskId]
+
+  if (!linkedId) {
+    // 聊天里没发起过这个任务（用户在生成面板自己出的图）：不打扰，仅记录
+    if (tracked && tracked.origin !== 'image-studio') {
+      return
+    }
+
+    return
+  }
+
+  const message = messages.value.find(item => item.id === linkedId)
+
+  if (message && tracked) {
+    applyTaskResultToMessage(message, tracked)
+  }
+}
+
+// 生成面板回流时同步更新（KeepAlive 下组件可能未卸载，用 watch 而不是 onActivated）
+watch(pendingFeedback, () => {
+  applyImageResultFeedback()
+})
+
+onActivated(() => {
+  applyImageResultFeedback()
 })
 
 watch(
@@ -246,6 +310,7 @@ async function sendMessage(messageOverride?: string) {
   }
   isLoading.value = true
   errorMessage.value = ''
+  stepLimitNotice.value = ''
   liveEvents.value = []
   saveSession(activeSessionId.value || createSessionId(), messages.value)
 
@@ -281,8 +346,14 @@ async function sendMessage(messageOverride?: string) {
           currentModel.value = payload.model
           currentRequestId.value = payload.requestId ?? ''
 
+          // Agent 若已提交出图任务，登记到统一状态源继续追踪到成图（P0-1）
+          trackGenerationFromMessage(assistantMessage)
+
+          // 步数达到上限：这是「提示」而非「错误」——结论通常已经可用
           if (payload.truncated) {
-            errorMessage.value = '推理步数已达上限，结果可能不完整，可换个说法再问一次。'
+            stepLimitNotice.value = `本次推理用满了 ${payload.iterations} 步预算，结论已尽量给全。如需更完整的推演，可以再追问一句让它继续。`
+          } else {
+            stepLimitNotice.value = ''
           }
         }
       },
@@ -658,6 +729,138 @@ function isListBlock(block: MessageBlock): block is ListBlock {
   return block.type === 'list'
 }
 
+/* ---------------- 提示词代码块的三个 action（P1-5） ---------------- */
+
+/** 记录「刚刚复制成功」的代码块 key，用于给出瞬时反馈 */
+const copiedBlockKey = shallowRef('')
+let copiedBlockTimer: number | null = null
+
+/** 正在就地编辑的代码块 key 与其草稿内容 */
+const editingBlockKey = shallowRef('')
+const editingBlockDraft = shallowRef('')
+
+function isPromptBlock(block: MessageBlock, message: ChatMessage) {
+  // 只把「最终回答里的代码块」当作提示词候选，避免对普通代码片段误报
+  return block.type === 'code'
+    && Boolean(block.content.trim())
+    && message.role === 'assistant'
+    && block.content.trim().length >= 20
+}
+
+/** 取代码块内容（模板里用于类型收窄，避免直接访问联合类型的字段） */
+function getCodeBlockContent(block: MessageBlock) {
+  return block.type === 'code' ? block.content : ''
+}
+
+async function copyPromptBlock(key: string, content: string) {
+  try {
+    await navigator.clipboard.writeText(content)
+  } catch {
+    // 剪贴板不可用（如非安全上下文）时降级为选中文本，仍让用户能手动复制
+    const textarea = document.createElement('textarea')
+    textarea.value = content
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.append(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    textarea.remove()
+  }
+
+  copiedBlockKey.value = key
+
+  if (copiedBlockTimer) {
+    window.clearTimeout(copiedBlockTimer)
+  }
+
+  copiedBlockTimer = window.setTimeout(() => {
+    copiedBlockKey.value = ''
+    copiedBlockTimer = null
+  }, 1800)
+}
+
+function startEditPromptBlock(key: string, content: string) {
+  editingBlockKey.value = key
+  editingBlockDraft.value = content
+}
+
+function cancelEditPromptBlock() {
+  editingBlockKey.value = ''
+  editingBlockDraft.value = ''
+}
+
+/** 「编辑后发送」：把改好的提示词作为新一轮用户输入发出去，让 Agent 重新自检 */
+function submitEditedPromptBlock() {
+  const draft = editingBlockDraft.value.trim()
+
+  if (!draft) {
+    return
+  }
+
+  cancelEditPromptBlock()
+  void sendMessage(`这是我调整后的提示词，请重新自检并给出最终版本：\n\n${draft}`)
+}
+
+/** 「用这条出图」：直接把这个代码块的内容送到统一任务源出图 */
+async function generateFromPromptBlock(message: ChatMessage, content: string) {
+  const key = `${message.id}-inline`
+
+  if (inlineGeneratingBlockKey.value) {
+    return
+  }
+
+  inlineGeneratingBlockKey.value = key
+  inlineGenerateError.value = ''
+
+  try {
+    const response = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: content.trim(), origin: 'chat-inline' }),
+    })
+
+    const body = await response.json().catch(() => null) as Record<string, unknown> | null
+
+    if (!response.ok) {
+      throw new Error(typeof body?.message === 'string' ? body.message : `出图请求失败 (${response.status})`)
+    }
+
+    const taskId = typeof body?.taskId === 'string' ? body.taskId : ''
+    const imageUrl = typeof body?.imageUrl === 'string' ? body.imageUrl : ''
+
+    if (!taskId && !imageUrl) {
+      throw new Error('出图服务未返回任务信息，请稍后重试')
+    }
+
+    message.steps = [
+      ...(message.steps || []),
+      {
+        type: 'tool',
+        name: 'generate_night_image',
+        args: { prompt: content.trim() },
+        result: { ...(body || {}), taskId, imageUrl, status: body?.status ?? 'submitted', origin: 'chat-inline', enabled: true },
+        ok: true,
+        durationMs: 0,
+      },
+    ]
+
+    if (taskId) {
+      trackTask({
+        taskId,
+        origin: 'chat-inline',
+        prompt: content.trim(),
+        sessionId: useClientSession().sessionId.value,
+        imageUrl,
+      })
+      chatTaskLinks.value = { ...chatTaskLinks.value, [taskId]: message.id }
+    }
+  } catch (error) {
+    inlineGenerateError.value = error instanceof Error ? error.message : '出图失败，请稍后重试'
+  } finally {
+    inlineGeneratingBlockKey.value = ''
+  }
+}
+
 function getHeadingTag(block: HeadingBlock) {
   return block.level === 1 ? 'h2' : block.level === 2 ? 'h3' : 'h4'
 }
@@ -706,6 +909,8 @@ function extractGeneration(steps?: AgentStep[]) {
     provider: typeof result.provider === 'string' ? result.provider : '',
     message: typeof result.message === 'string' ? result.message : '',
     error: typeof result.error === 'string' ? result.error : '',
+    /** 出图来源：聊天内点按钮补出图时标记为 chat-inline，便于跨 tab 交接时区分 */
+    origin: typeof result.origin === 'string' ? result.origin : '',
   }
 }
 
@@ -724,28 +929,111 @@ function extractPromptText(steps?: AgentStep[]) {
 
 /** 把 Agent 的成果带到「夜景生成」tab 继续操作 */
 function handoffToImageStudio(message: ChatMessage) {
+  const generation = extractGeneration(message.steps)
+
   handoffGenerationToImageStudio({
-    generation: extractGeneration(message.steps),
+    generation,
     prompt: extractPromptText(message.steps),
+    origin: generation?.origin === 'chat-inline' ? 'chat-inline' : 'chat-agent',
   })
 }
 
 function handoffGenerationToImageStudio(payload: {
   generation: ReturnType<typeof extractGeneration>
   prompt: string
+  origin: 'chat-agent' | 'chat-inline'
 }) {
-  const { generation, prompt } = payload
+  const { generation, prompt, origin } = payload
 
   handoffToImageStudioBridge({
     prompt: prompt || undefined,
     taskId: generation?.taskId || undefined,
     imageUrl: generation?.imageUrl || undefined,
+    source: origin,
   })
   emit('switch-tab', 'image')
 }
 
+type GenerationCardView = {
+  variant: 'done' | 'failed' | 'running' | 'submitted'
+  badge: string
+  taskId: string
+  imageUrl: string
+  provider: string
+  statusLabel: string
+  note: string
+}
+
+/**
+ * 出图结果卡片的展示模型：**以统一任务状态源为准**，
+ * 没有任务记录时回退到消息 steps 里的工具结果（P0-1 的关键衔接点）。
+ */
+function resolveGenerationCard(message: ChatMessage): GenerationCardView | null {
+  const fromSteps = extractGeneration(message.steps)
+
+  if (!fromSteps) {
+    return null
+  }
+
+  const tracked = fromSteps.taskId ? trackedTasks.value[fromSteps.taskId] : null
+
+  const taskId = tracked?.taskId || fromSteps.taskId
+  const imageUrl = tracked?.imageUrl || fromSteps.imageUrl
+  const status = tracked?.status || fromSteps.status
+  const statusText = tracked?.statusText || ''
+  const error = tracked?.errorMessage || fromSteps.error
+
+  if (status === 'failed') {
+    return {
+      variant: 'failed',
+      badge: '渲染失败',
+      taskId,
+      imageUrl: '',
+      provider: fromSteps.provider,
+      statusLabel: statusText || '失败',
+      note: error || '渲染未成功，可稍后重试或调整提示词。',
+    }
+  }
+
+  if (imageUrl) {
+    return {
+      variant: 'done',
+      badge: '渲染完成',
+      taskId,
+      imageUrl,
+      provider: fromSteps.provider,
+      statusLabel: statusText || '已完成',
+      note: '',
+    }
+  }
+
+  if (taskId) {
+    return {
+      variant: 'running',
+      badge: '渲染中',
+      taskId,
+      imageUrl: '',
+      provider: fromSteps.provider,
+      statusLabel: statusText || '渲染中…',
+      note: '成图后会自动出现在这里，也可以切到「夜景生成」查看完整进度。',
+    }
+  }
+
+  return {
+    variant: 'submitted',
+    badge: '未出图',
+    taskId: '',
+    imageUrl: '',
+    provider: '',
+    statusLabel: '',
+    note: fromSteps.message || '本次没有触发出图，可在下方直接用提示词渲染。',
+  }
+}
+
 /** 直接在聊天里出图（Agent 未触发时，用最终提示词就地补一次） */
 const isInlineGenerating = shallowRef(false)
+/** 正在「用这条出图」的代码块 key（P1-5） */
+const inlineGeneratingBlockKey = shallowRef('')
 const inlineGenerateError = shallowRef('')
 
 async function generateInlineFromMessage(message: ChatMessage) {
@@ -784,15 +1072,102 @@ async function generateInlineFromMessage(message: ChatMessage) {
         type: 'tool',
         name: 'generate_night_image',
         args: { prompt: prompt.trim() },
-        result: { ...(body || {}), taskId, imageUrl, status: body?.status ?? 'submitted' },
+        result: { ...(body || {}), taskId, imageUrl, status: body?.status ?? 'submitted', origin: 'chat-inline', enabled: true },
         ok: true,
         durationMs: 0,
       },
     ]
+
+    // 登记到统一任务状态源，由它负责轮询到成图（P0-1）
+    if (taskId) {
+      const tracked = trackTask({
+        taskId,
+        origin: 'chat-inline',
+        prompt: prompt.trim(),
+        sessionId: useClientSession().sessionId.value,
+        imageUrl,
+      })
+
+      chatTaskLinks.value = {
+        ...chatTaskLinks.value,
+        [taskId]: message.id,
+      }
+
+      if (tracked.status === 'done' && tracked.imageUrl) {
+        applyTaskResultToMessage(message, tracked)
+      }
+    }
   } catch (error) {
     inlineGenerateError.value = error instanceof Error ? error.message : '出图失败，请稍后重试'
   } finally {
     isInlineGenerating.value = false
+  }
+}
+
+/** 把统一任务源里的最新结果写回某条消息的 steps，让卡片实时反映进度（P0-1） */
+function applyTaskResultToMessage(message: ChatMessage, task: TrackedTask) {
+  const steps = [...(message.steps || [])]
+  const index = steps.findIndex(
+    step => step.type === 'tool'
+      && step.name === 'generate_night_image'
+      && (step.result as Record<string, unknown> | null)?.taskId === task.taskId,
+  )
+
+  const patch = {
+    taskId: task.taskId,
+    status: task.status,
+    imageUrl: task.imageUrl,
+    statusText: task.statusText,
+    error: task.status === 'failed' ? task.errorMessage : '',
+  }
+
+  if (index >= 0) {
+    const step = steps[index]!
+
+    if (step.type === 'tool') {
+      steps[index] = {
+        ...step,
+        ok: task.status !== 'failed',
+        result: { ...(step.result as Record<string, unknown> || {}), ...patch },
+      }
+    }
+  } else {
+    steps.push({
+      type: 'tool',
+      name: 'generate_night_image',
+      args: { prompt: task.prompt },
+      result: { ...patch, enabled: true },
+      ok: task.status !== 'failed',
+      durationMs: 0,
+    })
+  }
+
+  message.steps = steps
+}
+
+/** 从 Agent 的 steps 里找出它这次提交的出图任务，并登记到统一状态源（P0-1） */
+function trackGenerationFromMessage(message: ChatMessage) {
+  const generation = extractGeneration(message.steps)
+
+  if (!generation?.taskId) {
+    return
+  }
+
+  const tracked = trackTask({
+    taskId: generation.taskId,
+    origin: 'chat-agent',
+    prompt: extractPromptText(message.steps),
+    sessionId: useClientSession().sessionId.value,
+    imageUrl: generation.imageUrl,
+  })
+
+  chatTaskLinks.value = {
+    ...chatTaskLinks.value,
+    [generation.taskId]: message.id,
+  }
+
+  if (tracked.status === 'done' && tracked.imageUrl) {
+    applyTaskResultToMessage(message, tracked)
   }
 }
 
@@ -1013,55 +1388,126 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
                   </li>
                 </ul>
                 <pre v-else class="message-code-block"><code>{{ block.content }}</code></pre>
+
+                <!-- 提示词代码块：复制 / 编辑后发送 / 用这条出图（P1-5） -->
+                <div
+                  v-if="isPromptBlock(block, message)"
+                  class="prompt-actions"
+                >
+                  <div class="prompt-actions__bar">
+                    <span class="prompt-actions__label">提示词</span>
+
+                    <button
+                      class="prompt-actions__button ui-button-reset"
+                      type="button"
+                      @click="copyPromptBlock(`${message.id}-${blockIndex}`, getCodeBlockContent(block))"
+                    >
+                      {{ copiedBlockKey === `${message.id}-${blockIndex}` ? '已复制 ✓' : '复制' }}
+                    </button>
+
+                    <button
+                      class="prompt-actions__button ui-button-reset"
+                      type="button"
+                      @click="editingBlockKey === `${message.id}-${blockIndex}`
+                        ? cancelEditPromptBlock()
+                        : startEditPromptBlock(`${message.id}-${blockIndex}`, getCodeBlockContent(block))"
+                    >
+                      {{ editingBlockKey === `${message.id}-${blockIndex}` ? '取消编辑' : '编辑后发送' }}
+                    </button>
+
+                    <button
+                      class="prompt-actions__button prompt-actions__button--primary ui-button-reset"
+                      type="button"
+                      :disabled="Boolean(inlineGeneratingBlockKey)"
+                      @click="generateFromPromptBlock(message, getCodeBlockContent(block))"
+                    >
+                      {{ inlineGeneratingBlockKey === `${message.id}-inline` ? '正在出图…' : '用这条出图' }}
+                    </button>
+                  </div>
+
+                  <div
+                    v-if="editingBlockKey === `${message.id}-${blockIndex}`"
+                    class="prompt-actions__editor"
+                  >
+                    <textarea
+                      v-model="editingBlockDraft"
+                      class="prompt-actions__textarea"
+                      rows="6"
+                      placeholder="在这里调整提示词，发送后 Agent 会重新自检"
+                    />
+                    <div class="prompt-actions__editor-footer">
+                      <span class="prompt-actions__hint">{{ editingBlockDraft.trim().length }} 字</span>
+                      <button
+                        class="prompt-actions__button prompt-actions__button--primary ui-button-reset"
+                        type="button"
+                        :disabled="!editingBlockDraft.trim() || isLoading"
+                        @click="submitEditedPromptBlock"
+                      >
+                        发送调整
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </template>
 
               <section
-                v-if="message.role === 'assistant' && extractGeneration(message.steps)"
+                v-if="message.role === 'assistant' && resolveGenerationCard(message)"
                 class="generation-card"
               >
                 <header class="generation-card__head">
                   <span
                     class="generation-card__badge"
                     :class="{
-                      'generation-card__badge--live': extractGeneration(message.steps)?.ok,
-                      'generation-card__badge--error': !extractGeneration(message.steps)?.ok,
+                      'generation-card__badge--live': resolveGenerationCard(message)!.variant === 'done',
+                      'generation-card__badge--error': resolveGenerationCard(message)!.variant === 'failed',
                     }"
                   >
-                    {{ extractGeneration(message.steps)?.ok ? '已提交渲染' : '渲染未完成' }}
+                    {{ resolveGenerationCard(message)!.badge }}
                   </span>
                   <span class="generation-card__title">夜景渲染</span>
+                  <span
+                    v-if="resolveGenerationCard(message)!.variant === 'running'"
+                    class="generation-card__spinner"
+                    aria-hidden="true"
+                  />
                 </header>
 
                 <a
-                  v-if="extractGeneration(message.steps)?.imageUrl"
+                  v-if="resolveGenerationCard(message)!.imageUrl"
                   class="generation-card__preview"
-                  :href="extractGeneration(message.steps)?.imageUrl"
+                  :href="resolveGenerationCard(message)!.imageUrl"
                   target="_blank"
                   rel="noreferrer noopener"
                 >
-                  <img :src="extractGeneration(message.steps)?.imageUrl" alt="Agent 出图结果">
+                  <img :src="resolveGenerationCard(message)!.imageUrl" alt="Agent 出图结果">
                 </a>
 
+                <div v-else-if="resolveGenerationCard(message)!.variant === 'running'" class="generation-card__skeleton">
+                  <span class="generation-card__skeleton-line" />
+                  <span class="generation-card__skeleton-line generation-card__skeleton-line--short" />
+                </div>
+
                 <dl class="generation-card__meta">
-                  <div v-if="extractGeneration(message.steps)?.taskId" class="generation-card__meta-row">
+                  <div v-if="resolveGenerationCard(message)!.taskId" class="generation-card__meta-row">
                     <dt>任务 ID</dt>
-                    <dd>{{ extractGeneration(message.steps)?.taskId }}</dd>
+                    <dd>{{ resolveGenerationCard(message)!.taskId }}</dd>
                   </div>
-                  <div v-if="extractGeneration(message.steps)?.status" class="generation-card__meta-row">
+                  <div v-if="resolveGenerationCard(message)!.statusLabel" class="generation-card__meta-row">
                     <dt>状态</dt>
-                    <dd>{{ extractGeneration(message.steps)?.status }}</dd>
+                    <dd>{{ resolveGenerationCard(message)!.statusLabel }}</dd>
                   </div>
-                  <div v-if="extractGeneration(message.steps)?.provider" class="generation-card__meta-row">
+                  <div v-if="resolveGenerationCard(message)!.provider" class="generation-card__meta-row">
                     <dt>通道</dt>
-                    <dd>{{ extractGeneration(message.steps)?.provider }}</dd>
+                    <dd>{{ resolveGenerationCard(message)!.provider }}</dd>
                   </div>
                 </dl>
 
                 <p
-                  v-if="extractGeneration(message.steps)?.error || extractGeneration(message.steps)?.message"
+                  v-if="resolveGenerationCard(message)!.note"
                   class="generation-card__note"
+                  :class="{ 'generation-card__note--error': resolveGenerationCard(message)!.variant === 'failed' }"
                 >
-                  {{ extractGeneration(message.steps)?.error || extractGeneration(message.steps)?.message }}
+                  {{ resolveGenerationCard(message)!.note }}
                 </p>
 
                 <div class="generation-card__actions">
@@ -1070,16 +1516,25 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
                     type="button"
                     @click="handoffToImageStudio(message)"
                   >
-                    在「夜景生成」中查看
+                    {{ resolveGenerationCard(message)!.variant === 'done' ? '在「夜景生成」中查看' : '去「夜景生成」查看进度' }}
                   </button>
                   <a
-                    v-if="extractGeneration(message.steps)?.imageUrl"
+                    v-if="resolveGenerationCard(message)!.imageUrl"
                     class="generation-card__button ui-button-reset"
-                    :href="extractGeneration(message.steps)?.imageUrl"
+                    :href="resolveGenerationCard(message)!.imageUrl"
                     target="_blank"
                     rel="noreferrer noopener"
                   >
                     查看原图
+                  </a>
+                  <a
+                    v-if="resolveGenerationCard(message)!.imageUrl"
+                    class="generation-card__button ui-button-reset"
+                    :href="resolveGenerationCard(message)!.imageUrl"
+                    download
+                    rel="noreferrer noopener"
+                  >
+                    下载成图
                   </a>
                 </div>
               </section>
@@ -1119,6 +1574,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
                   </button>
                 </div>
               </section>
+
+              <p
+                v-if="message.role === 'assistant' && stepLimitNotice"
+                class="step-limit-notice"
+              >
+                <span class="step-limit-notice__badge">步数提醒</span>
+                <span>{{ stepLimitNotice }}</span>
+              </p>
             </div>
           </article>
 
@@ -1430,8 +1893,106 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   word-break: break-word;
 }
 
-.message-quote {
-  margin: 0;
+/* ---- 提示词代码块 action bar（P1-5） ---- */
+.prompt-actions {
+  margin: 8px 0 4px;
+}
+
+.prompt-actions__bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 12px;
+  background: #fafaf9;
+}
+
+.prompt-actions__label {
+  margin-right: 2px;
+  color: #9ca3af;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.prompt-actions__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid rgba(17, 24, 39, 0.12);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #374151;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, opacity 0.16s ease;
+}
+
+.prompt-actions__button:hover:not(:disabled) {
+  border-color: rgba(17, 24, 39, 0.28);
+  background: #f3f4f6;
+}
+
+.prompt-actions__button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.prompt-actions__button--primary {
+  border-color: transparent;
+  background: #111827;
+  color: #ffffff;
+}
+
+.prompt-actions__button--primary:hover:not(:disabled) {
+  background: #1f2937;
+}
+
+.prompt-actions__editor {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px dashed rgba(17, 24, 39, 0.16);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.prompt-actions__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid rgba(17, 24, 39, 0.12);
+  border-radius: 10px;
+  background: #fafaf9;
+  color: #111827;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+  resize: vertical;
+}
+
+.prompt-actions__textarea:focus {
+  outline: none;
+  border-color: rgba(17, 24, 39, 0.32);
+  background: #ffffff;
+}
+
+.prompt-actions__editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.prompt-actions__hint {
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.message-quote {  margin: 0;
   padding: 12px 16px;
   border-left: 3px solid rgba(17, 24, 39, 0.18);
   background: rgba(17, 24, 39, 0.03);
@@ -1562,6 +2123,35 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   background: #fafaf9;
 }
 
+.step-limit-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border: 1px solid rgba(180, 83, 9, 0.22);
+  border-radius: 10px;
+  background: rgba(251, 191, 36, 0.09);
+  color: #78350f;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.step-limit-notice__badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(180, 83, 9, 0.14);
+  color: #92400e;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
 .generation-card__head {
   display: flex;
   align-items: center;
@@ -1612,6 +2202,48 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   width: 100%;
   max-height: 320px;
   object-fit: contain;
+}
+
+.generation-card__spinner {
+  width: 12px;
+  height: 12px;
+  margin-left: auto;
+  border: 2px solid rgba(17, 24, 39, 0.14);
+  border-top-color: #6b7280;
+  border-radius: 999px;
+  animation: generation-card-spin 0.8s linear infinite;
+}
+
+@keyframes generation-card-spin {
+  to { transform: rotate(360deg); }
+}
+
+.generation-card__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 18px 16px;
+  border: 1px dashed rgba(17, 24, 39, 0.12);
+  border-radius: 10px;
+  background: #f9fafb;
+}
+
+.generation-card__skeleton-line {
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(17,24,39,0.06), rgba(17,24,39,0.12), rgba(17,24,39,0.06));
+  background-size: 200% 100%;
+  animation: generation-card-shimmer 1.4s ease-in-out infinite;
+}
+
+.generation-card__skeleton-line--short {
+  width: 52%;
+}
+
+@keyframes generation-card-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 .generation-card__meta {

@@ -6,6 +6,8 @@ import { useLocalImageDraft } from '~/composables/useLocalImageDraft'
 import { usePendingReloadResume } from '~/composables/usePendingReloadResume'
 import { useLocalImageHistory } from '~/composables/useLocalImageHistory'
 import { useWorkspaceBridge } from '~/composables/useWorkspaceBridge'
+import { useTaskCenter, type TrackedTask } from '~/composables/useTaskCenter'
+import { NIGHT_TEMPLATES, type NightTemplate } from '~~/shared/nightTemplates'
 
 const props = withDefaults(defineProps<{
   mobileSidebarOpen?: boolean
@@ -20,6 +22,8 @@ const emit = defineEmits<{
 const {
   activeView,
   customPrompt,
+  customNegativePrompt,
+  enableNegativePrompt,
   currentTaskId,
   displayedImageUrl,
   downloadResult,
@@ -60,6 +64,7 @@ const {
 const { clearDraft, loadDraft, saveDraft } = useLocalImageDraft()
 const { clearPendingReload, consumePendingReload, markPendingReload } = usePendingReloadResume('image')
 const { pendingHandoff, consumeHandoff } = useWorkspaceBridge()
+const { trackTask } = useTaskCenter()
 const MAX_CUSTOM_PROMPT_LENGTH = 10000
 
 const isSidebarExpanded = shallowRef(true)
@@ -68,8 +73,12 @@ const activeHistoryId = shallowRef('')
 const draftHistoryId = shallowRef('')
 const shouldAnimateResultReveal = shallowRef(false)
 const promptShellElement = shallowRef<HTMLElement | null>(null)
+/** 提示词输入框，用于校验失败时把用户直接带到需要补内容的地方 */
+const promptTextareaElement = shallowRef<HTMLTextAreaElement | null>(null)
 const mobilePromptOffset = shallowRef('0px')
 const isRestoringHistory = shallowRef(false)
+/** 点击生成但条件不满足时的就地提示（非任务错误） */
+const validationHint = shallowRef('')
 const isSwitchingHistoryRecord = shallowRef(false)
 const isImagePreviewOpen = shallowRef(false)
 const previewViewportElement = shallowRef<HTMLElement | null>(null)
@@ -134,14 +143,26 @@ const imageWrapperClasses = computed(() => ({
   'image-wrapper--result': activeView.value === 'result' && hasResultImage.value,
   'image-wrapper--reveal': shouldAnimateResultReveal.value && activeView.value === 'result' && hasResultImage.value,
 }))
+/** 是否填写了提示词（纯文生图路径） */
+const hasPromptToGenerate = computed(() => Boolean(customPrompt.value.trim()))
+
+/**
+ * 是否具备可出图的条件。
+ * 这是唯一的判定源：有参考图「或」有提示词都算出图条件成立——
+ *   - 有参考图 + 无提示词：走图生图，提示词由服务端 buildNightPrompt 兜底；
+ *   - 无参考图 + 有提示词：纯文生图（AI 聊天交接过来的就是这个场景）；
+ *   - 两者都无：才不允许提交。
+ * 历史踩坑：曾用 `!hasSourceImage` 或 `!hasPromptToGenerate` 单条件判断，
+ * 分别会拦掉「聊天交接」和「只传图不写词」两种合法路径，故统一收敛到这里。
+ */
+const canGenerate = computed(() => hasSourceImage.value || hasPromptToGenerate.value)
+
 const isGenerateDisabled = computed(() => (
   isRestoringHistory.value
   || isPromptTooLong.value
-  || (!isLoading.value && !hasPromptToGenerate.value)
+  || (!isLoading.value && !canGenerate.value)
 ))
 
-/** 是否具备可出图的条件：有参考图，或填写了提示词（支持纯文生图） */
-const hasPromptToGenerate = computed(() => Boolean(customPrompt.value.trim()))
 const generateRequirementHint = computed(() => {
   if (hasSourceImage.value) {
     return '将基于参考图渲染夜景；不传参考图则为纯文字生成。'
@@ -167,6 +188,50 @@ const previewImageTitle = computed(() => {
 })
 const trimmedPromptLength = computed(() => customPrompt.value.trim().length)
 const isPromptTooLong = computed(() => trimmedPromptLength.value > MAX_CUSTOM_PROMPT_LENGTH)
+
+/* ---------------- 模板库（P1-1） ---------------- */
+
+const isTemplatePickerOpen = shallowRef(false)
+const activeTemplateId = shallowRef('')
+
+/** 模板列表来自 shared/nightTemplates，与 Agent 使用的是同一份数据源 */
+const nightTemplates = NIGHT_TEMPLATES
+
+const activeTemplateHighlights = computed(() => {
+  const template = nightTemplates.find(item => item.id === activeTemplateId.value)
+  return template?.highlights ?? []
+})
+
+/** 套用模板：填充提示词与负向提示词，并启用负向输入 */
+function applyTemplate(template: NightTemplate) {
+  customPrompt.value = template.prompt
+  activeTemplateId.value = template.id
+
+  if (template.negativePrompt) {
+    customNegativePrompt.value = template.negativePrompt
+    enableNegativePrompt.value = true
+  }
+
+  isTemplatePickerOpen.value = false
+}
+
+// 用户一旦补上提示词，就撤掉「请填写提示词」的提示
+watch(hasPromptToGenerate, (hasPrompt) => {
+  if (hasPrompt) {
+    validationHint.value = ''
+  }
+})
+
+/** 校验不通过时，把焦点送到提示词输入框，让用户知道该在哪里补内容 */
+function focusPromptInput() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.requestAnimationFrame(() => {
+    promptTextareaElement.value?.focus()
+  })
+}
 
 /** 从「AI 聊天」交接过来的状态提示 */
 const handoffNotice = shallowRef('')
@@ -195,10 +260,21 @@ function applyHandoff() {
     })
   }
 
+  // 3) 任务进入统一状态源：由它负责轮询，成图后本面板与聊天都能拿到（P0-1）
+  if (handoff.taskId) {
+    trackTask({
+      taskId: handoff.taskId,
+      origin: handoff.source === 'chat-inline' ? 'chat-inline' : 'chat-agent',
+      prompt: handoff.prompt || customPrompt.value,
+      sessionId: sessionId.value,
+      imageUrl: handoff.imageUrl,
+    })
+  }
+
   handoffNotice.value = handoff.imageUrl
     ? '已从 AI 聊天带入本次出图结果，可直接下载或微调参数重新生成。'
     : handoff.taskId
-      ? '已从 AI 聊天带入提示词与任务，正在同步渲染进度。'
+      ? '已从 AI 聊天带入提示词与任务，正在同步渲染进度，完成后会自动展示。'
       : '已从 AI 聊天带入提示词，确认参数后即可出图。'
 
   if (handoffNoticeTimer) {
@@ -209,12 +285,59 @@ function applyHandoff() {
     handoffNotice.value = ''
     handoffNoticeTimer = null
   }, 8000)
+}
 
-  // 3) 若只有任务、还没有结果图，就继续轮询到出图为止
-  if (!handoff.imageUrl && handoff.taskId) {
-    void resumePendingTask(handoff.taskId, sessionId.value)
+/**
+ * 把统一任务状态源里「属于聊天来源」的完成结果同步回本面板。
+ * 这样无论用户在哪个 tab，成图都会出现在该出现的地方。
+ */
+function syncTaskFromCenter(task: TrackedTask) {
+  if (!task.taskId) {
+    return
+  }
+
+  const isChatOrigin = task.origin === 'chat-agent' || task.origin === 'chat-inline'
+
+  if (!isChatOrigin) {
+    return
+  }
+
+  if (currentTaskId.value && currentTaskId.value !== task.taskId) {
+    return
+  }
+
+  if (task.status === 'done' && task.imageUrl) {
+    if (resultUrl.value === task.imageUrl) {
+      return
+    }
+
+    resultUrl.value = task.imageUrl
+    currentTaskId.value = task.taskId
+    activeView.value = 'result'
+    taskStatus.value = '生成完成'
+    lastErrorMessage.value = ''
+    return
+  }
+
+  if (task.status === 'failed') {
+    lastErrorMessage.value = task.errorMessage || '渲染失败'
+    taskStatus.value = `失败：${task.errorMessage || '渲染失败'}`
+    return
+  }
+
+  // 进行中：同步状态文案，让用户在本面板也能看到进度
+  if (!isLoading.value) {
+    currentTaskId.value = task.taskId
+    taskStatus.value = task.statusText || '渲染中…'
   }
 }
+
+const { onTaskUpdate } = useTaskCenter()
+let unsubscribeTaskUpdate: (() => void) | null = null
+
+onMounted(() => {
+  unsubscribeTaskUpdate = onTaskUpdate(syncTaskFromCenter)
+})
 
 function dismissHandoffNotice() {
   handoffNotice.value = ''
@@ -303,6 +426,9 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  unsubscribeTaskUpdate?.()
+  unsubscribeTaskUpdate = null
+
   if (handoffNoticeTimer) {
     window.clearTimeout(handoffNoticeTimer)
     handoffNoticeTimer = null
@@ -850,9 +976,17 @@ async function handleGenerate() {
       draftHistoryId.value = createHistoryId()
     }
 
-    if (!isLoading.value && !hasSourceImage.value) {
+    // 出图条件由 canGenerate 统一判定（参考图与提示词满足其一即可）。
+    // 历史踩坑：这里曾写成 `if (!hasSourceImage.value) return`，导致从 AI 聊天
+    // 交接过来（只有提示词、没有参考图）时静默 return，按钮「点了没反应」。
+    if (!isLoading.value && !canGenerate.value) {
+      // 既没有参考图、也没有提示词时无法出图；给出明确反馈，避免按钮「点了没反应」
+      validationHint.value = '请先上传参考图，或在下方提示词框里填写夜景描述。'
+      focusPromptInput()
       return
     }
+
+    validationHint.value = ''
 
     if (isLoading.value) {
       if (isPollingPaused.value) {
@@ -1223,7 +1357,56 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
             </p>
           </div>
 
+          <!-- 模板库：一键套用沉淀好的场景提示词（P1-1） -->
+          <div class="template-picker">
+            <button
+              class="template-picker__toggle ui-button-reset"
+              type="button"
+              :aria-expanded="isTemplatePickerOpen"
+              @click="isTemplatePickerOpen = !isTemplatePickerOpen"
+            >
+              <span class="template-picker__toggle-label">
+                从模板开始
+                <em class="template-picker__count">{{ nightTemplates.length }}</em>
+              </span>
+              <span class="template-picker__chevron" :class="{ 'template-picker__chevron--open': isTemplatePickerOpen }">⌄</span>
+            </button>
+
+            <div v-if="isTemplatePickerOpen" class="template-picker__body">
+              <p class="template-picker__hint">
+                选一个贴近需求的场景作为起点，再用下方的提示词框按项目细节微调。
+              </p>
+
+              <ul class="template-picker__list">
+                <li
+                  v-for="template in nightTemplates"
+                  :key="template.id"
+                  class="template-picker__item"
+                  :class="{ 'template-picker__item--active': activeTemplateId === template.id }"
+                >
+                  <button
+                    class="template-picker__card ui-button-reset"
+                    type="button"
+                    @click="applyTemplate(template)"
+                  >
+                    <span class="template-picker__name">{{ template.name }}</span>
+                    <span class="template-picker__summary">{{ template.summary }}</span>
+                    <span class="template-picker__tags">
+                      <em v-for="tag in template.tags" :key="tag" class="template-picker__tag">{{ tag }}</em>
+                    </span>
+                  </button>
+                </li>
+              </ul>
+
+              <p v-if="activeTemplateHighlights.length" class="template-picker__highlights">
+                <strong>本模板要点</strong>
+                <span v-for="(point, index) in activeTemplateHighlights" :key="index">· {{ point }}</span>
+              </p>
+            </div>
+          </div>
+
           <textarea
+            ref="promptTextareaElement"
             v-model="customPrompt"
             class="prompt-textarea"
             :class="{ 'prompt-textarea--error': isPromptTooLong }"
@@ -1231,6 +1414,9 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
           />
 
           <div class="prompt-meta">
+            <p v-if="validationHint" class="prompt-validation-hint">
+              {{ validationHint }}
+            </p>
             <p class="prompt-meta-count" :class="{ 'prompt-meta-count--error': isPromptTooLong }">
               {{ trimmedPromptLength }} / {{ MAX_CUSTOM_PROMPT_LENGTH }}
             </p>
@@ -1919,12 +2105,175 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   color: #9a3412;
 }
 
+/* ---- 模板库（P1-1） ---- */
+.template-picker {
+  margin-bottom: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  background: rgba(250, 250, 249, 0.7);
+  overflow: hidden;
+}
+
+.template-picker__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 12px;
+  color: #374151;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.16s ease;
+}
+
+.template-picker__toggle:hover {
+  background: rgba(17, 24, 39, 0.03);
+}
+
+.template-picker__toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.template-picker__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(209, 138, 17, 0.14);
+  color: #92400e;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.template-picker__chevron {
+  color: #9ca3af;
+  font-size: 14px;
+  transition: transform 0.2s ease;
+}
+
+.template-picker__chevron--open {
+  transform: rotate(180deg);
+}
+
+.template-picker__body {
+  padding: 4px 12px 12px;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.template-picker__hint {
+  margin: 10px 0;
+  color: #6b7280;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.template-picker__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.template-picker__item {
+  display: flex;
+}
+
+.template-picker__card {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 11px;
+  border: 1px solid rgba(15, 23, 42, 0.09);
+  border-radius: 10px;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.template-picker__card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(209, 138, 17, 0.45);
+  box-shadow: 0 6px 18px -10px rgba(180, 83, 9, 0.5);
+}
+
+.template-picker__item--active .template-picker__card {
+  border-color: rgba(209, 138, 17, 0.7);
+  background: rgba(209, 138, 17, 0.05);
+}
+
+.template-picker__name {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.template-picker__summary {
+  color: #6b7280;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.template-picker__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.template-picker__tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.05);
+  color: #6b7280;
+  font-size: 10.5px;
+  font-style: normal;
+}
+
+.template-picker__highlights {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 12px 0 0;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: rgba(209, 138, 17, 0.06);
+  color: #78350f;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.template-picker__highlights strong {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .prompt-meta {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
   margin-top: 10px;
+}
+
+.prompt-validation-hint {
+  flex: 1;
+  margin: 0;
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
 }
 
 .prompt-meta-count {

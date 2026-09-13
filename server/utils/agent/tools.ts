@@ -4,6 +4,7 @@ import {
   getPromptGuide,
   reviewNightPrompt,
 } from './knowledge'
+import { NIGHT_TEMPLATES, getNightTemplateById, searchNightTemplates } from '../../../shared/nightTemplates'
 import type { AgentOptions, ToolSpec } from './types'
 
 /**
@@ -25,6 +26,33 @@ export function buildToolSpecs(): ToolSpec[] {
             description: '想获取的知识分区，默认 all（全部）。',
           },
         },
+      },
+    },
+    {
+      name: 'list_night_templates',
+      description:
+        '列出/检索团队沉淀的夜景提示词模板库。当用户的需求近似某个成熟场景（节日商业街、高端住宅、极简冷调、赛博霓虹、冬日暖光、滨水度假）时，'
+        + '优先调用它拿到现成模板作为起点，再按用户具体需求微调，这样质量更稳、更省步数。',
+      parameters: {
+        type: 'object',
+        properties: {
+          keyword: {
+            type: 'string',
+            description: '检索关键词（如「节日」「住宅」「极简」）。留空则返回全部模板。',
+          },
+        },
+      },
+    },
+    {
+      name: 'get_night_template',
+      description:
+        '按 id 取某条模板的完整内容（正向提示词、负向提示词、设计要点），拿到后可直接作为基线微调或投喂出图。',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '模板 id，来自 list_night_templates 的返回。' },
+        },
+        required: ['id'],
       },
     },
     {
@@ -88,6 +116,12 @@ export async function executeTool(
   switch (name) {
     case 'get_prompt_guide':
       return getPromptGuide(asString(args.section))
+
+    case 'list_night_templates':
+      return listNightTemplates(asString(args.keyword))
+
+    case 'get_night_template':
+      return getNightTemplate(asString(args.id))
 
     case 'compose_night_prompt':
       return composeNightPrompt({
@@ -162,6 +196,52 @@ async function generateNightImage(args: Record<string, unknown>, options: AgentO
 
 function asString(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+/** 列出模板：只返回轻量摘要，避免把全量提示词塞进上下文 */
+function listNightTemplates(keyword: string) {
+  const matched = searchNightTemplates(keyword)
+
+  return {
+    total: matched.length,
+    keyword: keyword || '',
+    templates: matched.map(item => ({
+      id: item.id,
+      name: item.name,
+      summary: item.summary,
+      tags: item.tags,
+    })),
+    note: matched.length === 0
+      ? '没有匹配的模板，请改用 compose_night_prompt 从零组装。'
+      : '拿到 id 后可用 get_night_template 取完整提示词。',
+  }
+}
+
+/** 取模板全文 */
+function getNightTemplate(id: string) {
+  if (!id) {
+    return { error: '缺少模板 id。可先调用 list_night_templates 查看可用模板。' }
+  }
+
+  const template = getNightTemplateById(id)
+
+  if (!template) {
+    return {
+      error: `未找到 id 为「${id}」的模板。`,
+      available: NIGHT_TEMPLATES.map(item => item.id),
+    }
+  }
+
+  return {
+    id: template.id,
+    name: template.name,
+    summary: template.summary,
+    tags: template.tags,
+    prompt: template.prompt,
+    negativePrompt: template.negativePrompt,
+    highlights: template.highlights,
+    usage: '可将 prompt 作为基线，按用户具体需求微调后再调用 review_night_prompt 自检。',
+  }
 }
 
 function asStringArray(value: unknown) {

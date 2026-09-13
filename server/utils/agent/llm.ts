@@ -275,27 +275,16 @@ export function createScriptedCaller({ stream = false, withGenerate = false } = 
 
 const MOCK_SCRIPT: Array<{ toolCall?: { name: string, arguments: string } | ((toolRounds: number) => { name: string, arguments: string }), text?: string }> = [
   {
+    // 先看模板库：与真实模型的行为保持一致（P1-1）
     toolCall: {
-      name: 'get_prompt_guide',
-      arguments: JSON.stringify({ section: 'all' }),
+      name: 'list_night_templates',
+      arguments: JSON.stringify({ keyword: '节日' }),
     },
   },
   {
     toolCall: {
-      name: 'compose_night_prompt',
-      arguments: JSON.stringify({
-        theme: '将建筑照片渲染为现代商业综合体夜景',
-        elements: [
-          '深蓝色夜空背景带几颗星星，高清无噪点',
-          '树木底部被暖黄色光打亮，近处灌木矮树被暖白色灯光照亮',
-          '树枝悬挂带「福」字的黄颜色八面圆柱形灯笼 5-10 个',
-          '树枝安装随机颜色的发光藤球灯 5-10 个',
-          '沿街商铺橱窗贴图清晰、透出柔和灯光',
-          '地面用投影灯投射鲜艳花朵图案',
-          '广告牌全部点亮、内透清晰、以品牌广告为主',
-        ],
-        lightingStyle: '暖黄主光 + 冷色夜色，明暗对比强烈，节日繁华氛围',
-      }),
+      name: 'get_night_template',
+      arguments: JSON.stringify({ id: 'festival-commercial' }),
     },
   },
   {
@@ -312,13 +301,13 @@ const MOCK_SCRIPT: Array<{ toolCall?: { name: string, arguments: string } | ((to
     toolCall: {
       name: 'review_night_prompt',
       arguments: JSON.stringify({
-        prompt: '深蓝色夜空背景带几颗星星，高清无噪点；树木底部被暖黄色光打亮，近处灌木矮树被暖白色灯光照亮；悬挂带「福」字的八面圆柱形灯笼 5-10 个；发光藤球灯 5-10 个；沿街商铺橱窗贴图清晰、透出柔和灯光；地面用投影灯投射鲜艳花朵图案；广告牌全部点亮、内透清晰、以品牌广告为主；整体呈现现代商业综合体夜景的活力与繁华氛围，色彩层次丰富、灯光对比强烈；禁止室内灯光亮度高于室外灯光。',
+        prompt: '将建筑照片渲染为现代商业综合体夜景。深蓝色夜空背景带几颗星星，高清无噪点；树木底部被暖黄色光打亮，近处灌木矮树被暖白色灯光照亮；树枝悬挂带「福」字的黄颜色八面圆柱形灯笼 5-10 个；发光藤球灯 5-10 个；沿街商铺橱窗贴图清晰、透出柔和灯光；地面用投影灯投射鲜艳花朵图案；广告牌全部点亮、内透清晰、以品牌广告为主；整体呈现现代商业综合体夜景的活力与繁华氛围，色彩层次丰富、灯光对比强烈；禁止室内灯光亮度高于室外灯光。',
       }),
     },
   },
   {
     text: [
-      '（演示模式 Mock）已跑通「知识检索 → 提示词组装 → 自检」三步循环，',
+      '（演示模式 Mock）已跑通「模板检索 → 自检 → 收尾」的循环，',
       '这说明 Agent 的自主循环与工具调用链路是通的。',
       '',
       '最终可直接使用的夜景提示词：',

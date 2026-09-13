@@ -5,7 +5,7 @@ import { useLocalChatDraft } from '~/composables/useLocalChatDraft'
 import { usePendingReloadResume } from '~/composables/usePendingReloadResume'
 import { useLocalChatHistory } from '~/composables/useLocalChatHistory'
 
-import type { AgentStep, ChatResponsePayload } from '~/shared/agent'
+import type { AgentStep, AgentStreamEvent, ChatResponsePayload } from '~/shared/agent'
 
 const props = withDefaults(defineProps<{
   mobileSidebarOpen?: boolean
@@ -186,6 +186,42 @@ function handleClearSessions() {
   clearConversation()
 }
 
+const liveEvents = shallowRef<AgentStreamEvent[]>([])
+
+/** 把最新的流式事件翻译成一句人能看懂的进度提示 */
+const liveStatusText = computed(() => {
+  const events = liveEvents.value
+
+  if (events.length === 0) {
+    return ''
+  }
+
+  const last = events[events.length - 1]!
+
+  if (last.type === 'start') {
+    return '正在连接模型…'
+  }
+
+  if (last.type === 'iteration') {
+    return `第 ${last.index} 轮推理…`
+  }
+
+  if (last.type === 'tool') {
+    return `正在执行：${getToolLabel(last.name)}`
+  }
+
+  if (last.type === 'rewrite') {
+    return `自检未通过，正在重写（第 ${last.attempt} 次）`
+  }
+
+  if (last.type === 'thought') {
+    return '正在思考…'
+  }
+
+  // 已在输出正文时，不再显示状态条（正文本身可见）
+  return ''
+})
+
 async function sendMessage(messageOverride?: string) {
   const liveInputValue = composerInputRef.value?.value ?? inputMessage.value
   const text = (messageOverride ?? liveInputValue).trim()
@@ -206,31 +242,116 @@ async function sendMessage(messageOverride?: string) {
   }
   isLoading.value = true
   errorMessage.value = ''
+  liveEvents.value = []
   saveSession(activeSessionId.value || createSessionId(), messages.value)
 
-  try {
-    const response = await $fetch<ChatResponse>('/api/chat', {
-      method: 'POST',
-      body: {
-        message: text,
-        history,
-      },
-    })
+  // 预置一条空的 assistant 消息，流式过程中原地填充
+  const assistantId = createMessageId()
+  messages.value.push({
+    id: assistantId,
+    role: 'assistant',
+    content: '',
+    steps: [],
+  })
+  const assistantMessage = messages.value[messages.value.length - 1]!
 
-    currentModel.value = response.model
-    currentRequestId.value = response.requestId ?? ''
-    messages.value.push({
-      id: createMessageId(),
-      role: 'assistant',
-      content: response.reply,
-      steps: response.steps ?? [],
+  try {
+    await streamChat({ message: text, history }, {
+      onEvent: (payload) => {
+        liveEvents.value = [...liveEvents.value, payload]
+
+        if (payload.type === 'delta') {
+          assistantMessage.content += payload.text
+          return
+        }
+
+        if (payload.type === 'thought' || payload.type === 'tool') {
+          assistantMessage.steps = [...(assistantMessage.steps ?? []), payload]
+          return
+        }
+
+        if (payload.type === 'done') {
+          // 以服务端汇总为准，保证落库内容完整一致
+          assistantMessage.content = payload.reply
+          assistantMessage.steps = payload.steps ?? assistantMessage.steps
+          currentModel.value = payload.model
+          currentRequestId.value = payload.requestId ?? ''
+
+          if (payload.truncated) {
+            errorMessage.value = '推理步数已达上限，结果可能不完整，可换个说法再问一次。'
+          }
+        }
+      },
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : '发送失败，请稍后重试'
     errorMessage.value = message
+
+    if (!assistantMessage.content) {
+      // 没拿到任何内容就失败了，移除占位消息，避免留空气泡
+      messages.value = messages.value.filter(item => item.id !== assistantId)
+    }
   } finally {
     saveSession(activeSessionId.value || createSessionId(), messages.value)
     isLoading.value = false
+  }
+}
+
+/** 解析 SSE 流（fetch + ReadableStream） */
+async function streamChat(
+  body: { message: string, history: Array<{ role: string, content: string }> },
+  handlers: { onEvent: (event: AgentStreamEvent) => void },
+) {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok || !response.body) {
+    let detail = ''
+
+    try {
+      const payload = await response.json()
+      detail = payload?.statusMessage || payload?.message || ''
+    } catch {
+      detail = ''
+    }
+
+    throw new Error(detail || `请求失败（${response.status}）`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+
+    const frames = buffer.split('\n\n')
+    buffer = frames.pop() || ''
+
+    for (const frame of frames) {
+      const dataLine = frame
+        .split('\n')
+        .find(line => line.startsWith('data:'))
+
+      if (!dataLine) {
+        continue
+      }
+
+      try {
+        handlers.onEvent(JSON.parse(dataLine.slice(5).trim()) as AgentStreamEvent)
+      } catch {
+        // 忽略无法解析的帧
+      }
+    }
   }
 }
 
@@ -725,7 +846,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
                         <span class="agent-trace__result">{{ summarizeStepResult(step) }}</span>
                       </span>
                     </template>
-                    <template v-else>
+                    <template v-else-if="step.type === 'rewrite'">
+                      <span class="agent-trace__badge agent-trace__badge--rewrite">重写</span>
+                      <span class="agent-trace__text">
+                        自检未通过，第 {{ step.attempt }} 次回炉
+                        <span class="agent-trace__result">{{ step.reason }}</span>
+                      </span>
+                    </template>
+                    <template v-else-if="step.type === 'final'">
                       <span class="agent-trace__badge agent-trace__badge--final">结论</span>
                       <span class="agent-trace__text">已给出最终回答</span>
                     </template>
@@ -771,9 +899,14 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
               LB
             </div>
             <div class="message-bubble message-bubble--loading">
-              <span class="typing-dot" />
-              <span class="typing-dot" />
-              <span class="typing-dot" />
+              <template v-if="liveStatusText">
+                <span class="live-status">{{ liveStatusText }}</span>
+              </template>
+              <template v-else>
+                <span class="typing-dot" />
+                <span class="typing-dot" />
+                <span class="typing-dot" />
+              </template>
             </div>
           </div>
         </div>
@@ -1159,6 +1292,11 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   color: #15803d;
 }
 
+.agent-trace__badge--rewrite {
+  background: rgba(180, 83, 9, 0.12);
+  color: #b45309;
+}
+
 .agent-trace__text {
   min-width: 0;
 }
@@ -1180,6 +1318,11 @@ function unbindViewportListener(query: MediaQueryList | null, listener: (event: 
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.live-status {
+  color: #6b7280;
+  font-size: 13px;
 }
 
 .typing-dot {

@@ -65,18 +65,41 @@ If image generation is slow, increase `HUNYUAN_MAX_POLL_DURATION_MS`. The defaul
 
 ### 响应结构
 
+聊天接口现在是 **SSE 流式**，事件以 `data: {json}` 逐帧推送：
+
+| 事件 | 含义 |
+|---|---|
+| `start` | 开始本轮推理，携带模型名 |
+| `iteration` | 进入第 N 轮循环 |
+| `thought` | 模型在调用工具前的思考文本 |
+| `tool` | 某次工具调用及其结果（`name` / `args` / `result` / `ok` / `durationMs`） |
+| `rewrite` | 自检不达标，触发第 N 次回炉重写 |
+| `delta` | 最终回答的文本增量（打字机效果） |
+| `done` | 收尾，携带完整结果 |
+| `error` | 出错 |
+
+`done` 事件载荷：
+
 ```json
 {
+  "type": "done",
   "reply": "最终回答",
   "model": "deepseek-v4-flash",
   "requestId": "...",
   "steps": [{ "type": "tool", "name": "compose_night_prompt", "args": {}, "result": {}, "ok": true, "durationMs": 0 }],
   "toolCalls": ["get_prompt_guide", "compose_night_prompt", "review_night_prompt"],
-  "iterations": 4
+  "iterations": 4,
+  "truncated": false
 }
 ```
 
-`steps` 用于前端渲染「思考过程」，请求体 `{ message, history }` 保持不变，向后兼容。
+请求体 `{ message, history }` 保持不变，向后兼容。
+
+### 自动重写（自我反思闭环）
+
+当 `review_night_prompt` 判定为「得分 < 80、存在缺失要素或警告」时，循环会自动向模型注入一条重写指令，
+要求它重新 `compose_night_prompt` 并复检，最多回炉 `AGENT_REWRITE_ATTEMPTS` 次（默认 1，0 表示关闭）。
+前端会实时显示「重写」步骤。这让 Agent 具备**产出 → 自检 → 改进**的闭环，而不只是一次性生成。
 
 ### 本地无 Key 演示
 
